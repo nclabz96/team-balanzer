@@ -248,6 +248,7 @@ export default function AdminPage() {
     if (!authLoading && !user) router.replace('/login')
   }, [authLoading, user, router])
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (user) fetchPlayers()
   }, [user])

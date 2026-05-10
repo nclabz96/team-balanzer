@@ -4,6 +4,12 @@ import { createContext, useContext, useEffect, useState } from 'react'
 import { createBrowserClient } from '@supabase/auth-helpers-nextjs'
 import { DEFAULT_WEIGHTS, type Weights } from '@/lib/utils'
 
+// Stable client — created once at module level, not inside render
+const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
+
 type SettingsCtx = {
   weights: Weights
   isLoading: boolean
@@ -23,34 +29,32 @@ export function useSettings() {
 export default function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [weights, setWeights] = useState<Weights>(DEFAULT_WEIGHTS)
   const [isLoading, setIsLoading] = useState(true)
+  const [tick, setTick] = useState(0)
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
-
-  const load = async () => {
+  useEffect(() => {
+    let cancelled = false
     setIsLoading(true)
-    const { data } = await supabase
+    supabase
       .from('settings')
       .select('batting_weight, bowling_weight, fielding_weight')
       .eq('id', 1)
       .single()
-
-    if (data) {
-      setWeights({
-        batting: Number(data.batting_weight),
-        bowling: Number(data.bowling_weight),
-        fielding: Number(data.fielding_weight),
+      .then(({ data }) => {
+        if (cancelled) return
+        if (data) {
+          setWeights({
+            batting: Number(data.batting_weight),
+            bowling: Number(data.bowling_weight),
+            fielding: Number(data.fielding_weight),
+          })
+        }
+        setIsLoading(false)
       })
-    }
-    setIsLoading(false)
-  }
-
-  useEffect(() => { load() }, [])
+    return () => { cancelled = true }
+  }, [tick])
 
   return (
-    <SettingsContext.Provider value={{ weights, isLoading, reload: load }}>
+    <SettingsContext.Provider value={{ weights, isLoading, reload: () => setTick(t => t + 1) }}>
       {children}
     </SettingsContext.Provider>
   )
