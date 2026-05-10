@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import AuthProvider from "@/components/AuthProvider";
@@ -20,6 +20,11 @@ const geistMono = localFont({
 
 // Opt out of static generation for all routes — this app requires auth/dynamic data
 export const dynamic = 'force-dynamic'
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+}
 
 export const metadata: Metadata = {
   title: {
