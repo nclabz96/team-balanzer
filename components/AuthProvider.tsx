@@ -1,8 +1,7 @@
 'use client'
 
-import { createBrowserClient } from '@supabase/auth-helpers-nextjs'
+import { createClient, SupabaseClient, Session, User } from '@supabase/supabase-js'
 import { createContext, useContext, useEffect, useState } from 'react'
-import type { Session, SupabaseClient, User } from '@supabase/supabase-js'
 
 type AuthContextType = {
   supabase: SupabaseClient
@@ -19,34 +18,37 @@ export function useAuth() {
   return ctx
 }
 
+// Created once at module level — createClient from @supabase/supabase-js is safe
+// to call during SSR (no browser-specific checks). Placeholder fallback prevents
+// a hard crash when env vars are missing, so the app renders an error gracefully
+// instead of throwing an unhandled exception.
+const supabaseClient = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL    || 'https://placeholder.supabase.co',
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-anon-key'
+)
+
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [supabase] = useState(() =>
-    createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    )
-  )
   const [session, setSession] = useState<Session | null>(null)
-  const [user, setUser] = useState<User | null>(null)
+  const [user, setUser]       = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
+    supabaseClient.auth.getSession().then(({ data }) => {
       setSession(data.session)
       setUser(data.session?.user ?? null)
       setIsLoading(false)
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabaseClient.auth.onAuthStateChange((_event, session) => {
       setSession(session)
       setUser(session?.user ?? null)
     })
 
     return () => subscription.unsubscribe()
-  }, [supabase])
+  }, [])
 
   return (
-    <AuthContext.Provider value={{ supabase, session, user, isLoading }}>
+    <AuthContext.Provider value={{ supabase: supabaseClient, session, user, isLoading }}>
       {children}
     </AuthContext.Provider>
   )
