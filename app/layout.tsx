@@ -18,6 +18,9 @@ const geistMono = localFont({
   weight: "100 900",
 });
 
+// Opt out of static generation for all routes — this app requires auth/dynamic data
+export const dynamic = 'force-dynamic'
+
 export const metadata: Metadata = {
   title: {
     template: "%s | Cricket Team Balancer",
