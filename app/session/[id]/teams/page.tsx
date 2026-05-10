@@ -103,22 +103,40 @@ function TeamColumn({
 
 function AddPlayerModal({
   available,
+  teams,
   onAdd,
   onClose,
 }: {
   available: ScoredPlayer[]
+  teams: Teams
   onAdd: (player: ScoredPlayer, team: 'A' | 'B') => void
   onClose: () => void
 }) {
   const [selectedId, setSelectedId] = useState(available[0]?.id ?? '')
-  const [targetTeam, setTargetTeam] = useState<'A' | 'B'>('A')
+  const [targetTeam, setTargetTeam] = useState<'A' | 'B' | 'auto'>('auto')
+
+  const resolveTeam = (): 'A' | 'B' => {
+    if (targetTeam !== 'auto') return targetTeam
+    // Assign to team with fewer players; break ties by lower total score
+    if (teams.teamA.length !== teams.teamB.length) {
+      return teams.teamA.length <= teams.teamB.length ? 'A' : 'B'
+    }
+    return teamTotal(teams.teamA) <= teamTotal(teams.teamB) ? 'A' : 'B'
+  }
 
   const handleAdd = () => {
     const player = available.find(p => p.id === selectedId)
     if (!player) return
-    onAdd(player, targetTeam)
+    onAdd(player, resolveTeam())
     onClose()
   }
+
+  type Option = { label: string; value: 'auto' | 'A' | 'B' }
+  const options: Option[] = [
+    { label: 'Auto', value: 'auto' },
+    { label: 'Team A', value: 'A' },
+    { label: 'Team B', value: 'B' },
+  ]
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -148,21 +166,21 @@ function AddPlayerModal({
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Assign to</label>
-            <div className="grid grid-cols-2 gap-3">
-              {(['A', 'B'] as const).map(t => (
+            <div className="grid grid-cols-3 gap-2">
+              {options.map(opt => (
                 <button
-                  key={t}
+                  key={opt.value}
                   type="button"
-                  onClick={() => setTargetTeam(t)}
+                  onClick={() => setTargetTeam(opt.value)}
                   className={`py-3 rounded-xl font-bold text-sm transition-colors border-2 ${
-                    targetTeam === t
-                      ? t === 'A'
-                        ? 'bg-green-800 border-green-800 text-white'
-                        : 'bg-teal-700 border-teal-700 text-white'
+                    targetTeam === opt.value
+                      ? opt.value === 'B'
+                        ? 'bg-teal-700 border-teal-700 text-white'
+                        : 'bg-green-800 border-green-800 text-white'
                       : 'border-gray-200 text-gray-500 hover:border-gray-300'
                   }`}
                 >
-                  Team {t}
+                  {opt.label}
                 </button>
               ))}
             </div>
@@ -182,7 +200,7 @@ function AddPlayerModal({
               disabled={!selectedId}
               className="flex-1 py-2.5 rounded-lg bg-green-800 hover:bg-green-700 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors"
             >
-              Add to Team {targetTeam}
+              Add
             </button>
           </div>
         </div>
@@ -435,6 +453,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
       {showAddModal && (
         <AddPlayerModal
           available={availablePlayers}
+          teams={teams}
           onAdd={addPlayerToTeam}
           onClose={() => setShowAddModal(false)}
         />
