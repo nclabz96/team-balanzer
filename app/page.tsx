@@ -33,6 +33,7 @@ type GameSession = {
   id: string
   session_date: string
   notes: string | null
+  created_at: string
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -82,22 +83,43 @@ function PlayerCard({ player, weights }: { player: Player; weights: { batting: n
 
 // ─── SessionRow ───────────────────────────────────────────────────────────────
 
-function SessionRow({ session }: { session: GameSession }) {
+function SessionRow({
+  session,
+  isAdmin,
+  onDelete,
+}: {
+  session: GameSession
+  isAdmin: boolean
+  onDelete: (id: string) => void
+}) {
   return (
-    <Link
-      href={`/session/${session.id}`}
-      className="group bg-white rounded-xl border border-gray-100 px-4 py-3.5 flex items-center justify-between hover:border-green-200 hover:shadow-sm transition-all"
-    >
-      <div className="min-w-0">
+    <div className="group bg-white rounded-xl border border-gray-100 px-4 py-3.5 flex items-center justify-between hover:border-green-200 hover:shadow-sm transition-all">
+      <Link href={`/session/${session.id}`} className="min-w-0 flex-1">
         <div className="font-semibold text-gray-900 text-sm">{formatDate(session.session_date)}</div>
         {session.notes && (
           <div className="text-xs text-gray-400 mt-0.5 truncate">{session.notes}</div>
         )}
+      </Link>
+      <div className="shrink-0 flex items-center gap-3 ml-3">
+        {isAdmin && (
+          <button
+            onClick={() => onDelete(session.id)}
+            className="text-gray-300 hover:text-red-500 transition-colors p-1 -m-1"
+            aria-label="Delete session"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
+        )}
+        <Link
+          href={`/session/${session.id}`}
+          className="text-green-700 text-sm font-semibold group-hover:translate-x-0.5 transition-transform"
+        >
+          View →
+        </Link>
       </div>
-      <span className="shrink-0 text-green-700 text-sm font-semibold ml-3 group-hover:translate-x-0.5 transition-transform">
-        View →
-      </span>
-    </Link>
+    </div>
   )
 }
 
@@ -120,9 +142,10 @@ export default function HomePage() {
           .order('name'),
         supabase
           .from('sessions')
-          .select('id, session_date, notes')
+          .select('id, session_date, notes, created_at')
           .order('session_date', { ascending: false })
-          .limit(5),
+          .order('created_at', { ascending: false })
+          .limit(10),
       ])
       setPlayers(playerData ?? [])
       setSessions(sessionData ?? [])
@@ -132,6 +155,14 @@ export default function HomePage() {
   }, [supabase])
 
   const showNewSession = !authLoading && user !== null
+
+  const handleDeleteSession = async (id: string) => {
+    if (!confirm('Delete this session? This cannot be undone.')) return
+    await supabase.from('teams').delete().eq('session_id', id)
+    await supabase.from('session_players').delete().eq('session_id', id)
+    await supabase.from('sessions').delete().eq('id', id)
+    setSessions(prev => prev.filter(s => s.id !== id))
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -204,7 +235,7 @@ export default function HomePage() {
             <h2 className="text-xl font-bold text-gray-900">Recent Sessions</h2>
             {!fetching && sessions.length > 0 && (
               <span className="text-sm text-gray-400 bg-gray-100 px-2.5 py-0.5 rounded-full font-medium">
-                Last {sessions.length}
+                {sessions.length} session{sessions.length !== 1 ? 's' : ''}
               </span>
             )}
           </div>
@@ -226,7 +257,14 @@ export default function HomePage() {
             </div>
           ) : (
             <div className="flex flex-col gap-2">
-              {sessions.map(s => <SessionRow key={s.id} session={s} />)}
+              {sessions.map(s => (
+                <SessionRow
+                  key={s.id}
+                  session={s}
+                  isAdmin={!!user}
+                  onDelete={handleDeleteSession}
+                />
+              ))}
             </div>
           )}
         </section>
