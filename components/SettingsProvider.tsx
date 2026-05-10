@@ -4,12 +4,6 @@ import { createContext, useContext, useEffect, useState } from 'react'
 import { createBrowserClient } from '@supabase/auth-helpers-nextjs'
 import { DEFAULT_WEIGHTS, type Weights } from '@/lib/utils'
 
-// Stable client — created once at module level, not inside render
-const supabase = createBrowserClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
-
 type SettingsCtx = {
   weights: Weights
   isLoading: boolean
@@ -32,8 +26,16 @@ export default function SettingsProvider({ children }: { children: React.ReactNo
   const [tick, setTick] = useState(0)
 
   useEffect(() => {
+    // Client is created inside useEffect so it never runs on the server
+    // during Next.js static generation
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+
     let cancelled = false
     setIsLoading(true)
+
     supabase
       .from('settings')
       .select('batting_weight, bowling_weight, fielding_weight')
@@ -50,6 +52,7 @@ export default function SettingsProvider({ children }: { children: React.ReactNo
         }
         setIsLoading(false)
       })
+
     return () => { cancelled = true }
   }, [tick])
 
