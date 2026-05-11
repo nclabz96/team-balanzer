@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useAuth } from '@/components/AuthProvider'
 import { useToast } from '@/components/ToastProvider'
 import { useSettings } from '@/components/SettingsProvider'
-import { calcScore, ratingBadge, type Weights } from '@/lib/utils'
+import { calcScore, ratingBadge, skillAverages, balanceLoss, simulatedAnnealing, type Weights } from '@/lib/utils'
 import Spinner from '@/components/Spinner'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -21,35 +21,54 @@ type ScoredPlayer = {
 
 type Teams = { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }
 
-// ─── Algorithm ────────────────────────────────────────────────────────────────
-
-// Snake draft: A, B, B, A, A, B, B, A, …
-function snakeDraft(players: ScoredPlayer[], jitter: boolean): Teams {
-  const ranked = [...players].sort((a, b) => {
-    const jA = jitter ? (Math.random() - 0.5) * 1.5 : 0
-    const jB = jitter ? (Math.random() - 0.5) * 1.5 : 0
-    return (b.score + jB) - (a.score + jA)
-  })
-
-  const teamA: ScoredPlayer[] = []
-  const teamB: ScoredPlayer[] = []
-
-  ranked.forEach((p, i) => {
-    const pairIndex = Math.floor(i / 2)
-    const posInPair = i % 2
-    const goesToA = (pairIndex % 2 === 0 && posInPair === 0) || (pairIndex % 2 === 1 && posInPair === 1)
-    ;(goesToA ? teamA : teamB).push(p)
-  })
-
-  return { teamA, teamB }
-}
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function scored(p: Omit<ScoredPlayer, 'score'>, w: Weights): ScoredPlayer {
   return { ...p, score: calcScore(p, w) }
 }
 
-function teamTotal(team: ScoredPlayer[]) {
-  return team.reduce((sum, p) => sum + p.score, 0)
+// ─── SkillBalance ─────────────────────────────────────────────────────────────
+
+function SkillBalance({ teams }: { teams: Teams }) {
+  const avgA = skillAverages(teams.teamA)
+  const avgB = skillAverages(teams.teamB)
+
+  const rows = [
+    { label: 'Batting', a: avgA.batting, b: avgB.batting },
+    { label: 'Bowling', a: avgA.bowling, b: avgB.bowling },
+    { label: 'Fielding', a: avgA.fielding, b: avgB.fielding },
+  ]
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
+      <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Skill Balance</h3>
+      <div className="space-y-2">
+        {rows.map(({ label, a, b }) => {
+          const diff = Math.abs(a - b)
+          const gapColor = diff < 0.5 ? 'text-green-600' : diff < 1.5 ? 'text-amber-500' : 'text-red-500'
+          const gapLabel = diff < 0.5 ? 'Matched' : diff < 1.5 ? 'Close' : 'Gap'
+          return (
+            <div key={label} className="flex items-center gap-3 text-sm">
+              <span className="w-14 text-xs text-gray-500 shrink-0">{label}</span>
+              <span className="font-bold tabular-nums text-green-800 w-8 text-right shrink-0">{a.toFixed(1)}</span>
+              <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gray-300 rounded-full"
+                  style={{ width: `${100 - Math.min(diff / 5, 1) * 100}%` }}
+                />
+              </div>
+              <span className="font-bold tabular-nums text-teal-700 w-8 shrink-0">{b.toFixed(1)}</span>
+              <span className={`text-xs font-semibold w-14 text-right shrink-0 ${gapColor}`}>{gapLabel}</span>
+            </div>
+          )
+        })}
+      </div>
+      <div className="mt-3 flex gap-4 text-xs text-gray-400 justify-end">
+        <span className="font-semibold text-green-800">A</span>
+        <span className="font-semibold text-teal-700">B</span>
+      </div>
+    </div>
+  )
 }
 
 // ─── TeamColumn ───────────────────────────────────────────────────────────────
@@ -63,7 +82,7 @@ function TeamColumn({
   team: ScoredPlayer[]
   headerClass: string
 }) {
-  const total = teamTotal(team)
+  const avgs = skillAverages(team)
 
   return (
     <div className="flex-1 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
@@ -91,9 +110,19 @@ function TeamColumn({
         ))}
       </div>
 
-      <div className="border-t border-gray-100 px-4 py-3 flex justify-between items-center bg-gray-50">
-        <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Total</span>
-        <span className="font-bold text-gray-900 tabular-nums">{total.toFixed(1)}</span>
+      <div className="border-t border-gray-100 px-3 py-3 bg-gray-50">
+        <div className="grid grid-cols-3 gap-1 text-center">
+          {[
+            { label: 'Avg Bat', val: avgs.batting },
+            { label: 'Avg Bowl', val: avgs.bowling },
+            { label: 'Avg Field', val: avgs.fielding },
+          ].map(({ label, val }) => (
+            <div key={label}>
+              <div className="text-xs text-gray-400">{label}</div>
+              <div className={`text-xs font-bold tabular-nums ${ratingBadge(val)} rounded px-1 inline-block mt-0.5`}>{val.toFixed(1)}</div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )
@@ -104,11 +133,13 @@ function TeamColumn({
 function AddPlayerModal({
   available,
   teams,
+  weights,
   onAdd,
   onClose,
 }: {
   available: ScoredPlayer[]
   teams: Teams
+  weights: Weights
   onAdd: (player: ScoredPlayer, team: 'A' | 'B') => void
   onClose: () => void
 }) {
@@ -117,11 +148,15 @@ function AddPlayerModal({
 
   const resolveTeam = (): 'A' | 'B' => {
     if (targetTeam !== 'auto') return targetTeam
-    // Assign to team with fewer players; break ties by lower total score
     if (teams.teamA.length !== teams.teamB.length) {
       return teams.teamA.length <= teams.teamB.length ? 'A' : 'B'
     }
-    return teamTotal(teams.teamA) <= teamTotal(teams.teamB) ? 'A' : 'B'
+    // Pick team that results in lower per-skill imbalance after adding the player
+    const player = available.find(p => p.id === selectedId)
+    if (!player) return 'A'
+    const lossIfA = balanceLoss([...teams.teamA, player], teams.teamB, weights)
+    const lossIfB = balanceLoss(teams.teamA, [...teams.teamB, player], weights)
+    return lossIfA <= lossIfB ? 'A' : 'B'
   }
 
   const handleAdd = () => {
@@ -217,11 +252,8 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
   const { showToast } = useToast()
   const { weights } = useSettings()
 
-  // Players originally in session_players for this session
   const [sessionPlayerIds, setSessionPlayerIds] = useState<Set<string>>(new Set())
-  // All players currently in the team columns (session + any manually added)
   const [allPlayers, setAllPlayers] = useState<ScoredPlayer[]>([])
-  // Active players not yet in either team (for the Add Player modal)
   const [availablePlayers, setAvailablePlayers] = useState<ScoredPlayer[]>([])
   const [teams, setTeams] = useState<Teams | null>(null)
   const [teamsSaved, setTeamsSaved] = useState(false)
@@ -266,7 +298,6 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
       setSessionPlayerIds(sessionIds)
 
       if (savedTeams && savedTeams.length > 0) {
-        // Load from saved teams table — may include players added post-generation
         const savedIds = new Set(savedTeams.map(t => t.player_id))
         const extraActive: ScoredPlayer[] = ((allActive ?? []) as {
           id: string; name: string; batting_rating: number; bowling_rating: number; fielding_rating: number
@@ -290,8 +321,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
         )
       } else if (sessionPlayers.length >= 2) {
         setAllPlayers(sessionPlayers)
-        const draft = snakeDraft(sessionPlayers, false)
-        setTeams(draft)
+        setTeams(simulatedAnnealing(sessionPlayers, weights))
         setTeamsSaved(false)
 
         const assignedIds = new Set(sessionPlayers.map(p => p.id))
@@ -312,7 +342,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
   const regenerate = () => {
     if (!allPlayers.length) return
     const rescored = allPlayers.map(p => scored(p, weights))
-    setTeams(snakeDraft(rescored, true))
+    setTeams(simulatedAnnealing(rescored, weights))
     setTeamsSaved(false)
   }
 
@@ -332,7 +362,6 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
     if (!teams || saving) return
     setSaving(true)
 
-    // Upsert any players that weren't in session_players (late additions)
     const newToSession = [...teams.teamA, ...teams.teamB].filter(p => !sessionPlayerIds.has(p.id))
     if (newToSession.length > 0) {
       await supabase.from('session_players').upsert(
@@ -376,12 +405,10 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
     )
   }
 
-  const gap = Math.abs(teamTotal(teams.teamA) - teamTotal(teams.teamB)).toFixed(1)
-
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
       {/* Header */}
-      <div className="mb-6">
+      <div className="mb-4">
         <div className="flex items-center gap-2 text-sm text-gray-400 mb-2">
           <Link href="/" className="hover:text-gray-600 transition-colors">Home</Link>
           <span>›</span>
@@ -389,11 +416,12 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
         </div>
         <h1 className="text-2xl font-bold text-gray-900">Generated Teams</h1>
         <p className="text-sm text-gray-500 mt-0.5">
-          {teamsSaved
-            ? 'Teams saved for this session.'
-            : `${allPlayers.length} players · Score gap: ${gap}`}
+          {teamsSaved ? 'Teams saved for this session.' : `${allPlayers.length} players · balanced by skill`}
         </p>
       </div>
+
+      {/* Skill balance summary */}
+      <SkillBalance teams={teams} />
 
       {/* Teams side-by-side */}
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
@@ -454,6 +482,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
         <AddPlayerModal
           available={availablePlayers}
           teams={teams}
+          weights={weights}
           onAdd={addPlayerToTeam}
           onClose={() => setShowAddModal(false)}
         />
