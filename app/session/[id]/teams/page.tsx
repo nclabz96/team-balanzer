@@ -29,18 +29,18 @@ function scored(p: Omit<ScoredPlayer, 'score'>, w: Weights): ScoredPlayer {
 
 // ─── findSubPlayer ────────────────────────────────────────────────────────────
 
-function findSubPlayer(largerTeam: ScoredPlayer[], smallerTeam: ScoredPlayer[], weights: Weights): ScoredPlayer {
-  let bestSub = largerTeam[0]
-  let bestLoss = Infinity
-  for (const candidate of largerTeam) {
-    const coreTeam = largerTeam.filter(p => p.id !== candidate.id)
-    const loss = balanceLoss(coreTeam, smallerTeam, weights)
-    if (loss < bestLoss) {
-      bestLoss = loss
-      bestSub = candidate
-    }
-  }
-  return bestSub
+function balanceWithSub(players: ScoredPlayer[], weights: Weights): Teams {
+  if (players.length % 2 === 0) return simulatedAnnealing(players, weights)
+
+  const sub = [...players].sort((a, b) => a.score - b.score)[0]
+  const rest = players.filter(p => p.id !== sub.id)
+  const { teamA, teamB } = simulatedAnnealing(rest, weights)
+
+  const totalA = teamA.reduce((s, p) => s + p.score, 0)
+  const totalB = teamB.reduce((s, p) => s + p.score, 0)
+  return totalA <= totalB
+    ? { teamA: [...teamA, sub], teamB }
+    : { teamA, teamB: [...teamB, sub] }
 }
 
 // ─── SkillBalance ─────────────────────────────────────────────────────────────
@@ -353,7 +353,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
         )
       } else if (sessionPlayers.length >= 2) {
         setAllPlayers(sessionPlayers)
-        setTeams(simulatedAnnealing(sessionPlayers, weights))
+        setTeams(balanceWithSub(sessionPlayers, weights))
         setTeamsSaved(false)
 
         const assignedIds = new Set(sessionPlayers.map(p => p.id))
@@ -374,7 +374,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
   const regenerate = () => {
     if (!allPlayers.length) return
     const rescored = allPlayers.map(p => scored(p, weights))
-    setTeams(simulatedAnnealing(rescored, weights))
+    setTeams(balanceWithSub(rescored, weights))
     setTeamsSaved(false)
   }
 
@@ -430,8 +430,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
     if (!teams) return null
     if (teams.teamA.length === teams.teamB.length) return null
     const larger = teams.teamA.length > teams.teamB.length ? teams.teamA : teams.teamB
-    const smaller = teams.teamA.length > teams.teamB.length ? teams.teamB : teams.teamA
-    return findSubPlayer(larger, smaller, weights).id
+    return larger.reduce((min, p) => p.score < min.score ? p : min).id
   })()
 
   if (!teams) {
