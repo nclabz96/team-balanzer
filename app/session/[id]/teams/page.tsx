@@ -27,11 +27,30 @@ function scored(p: Omit<ScoredPlayer, 'score'>, w: Weights): ScoredPlayer {
   return { ...p, score: calcScore(p, w) }
 }
 
+// ─── findSubPlayer ────────────────────────────────────────────────────────────
+
+function findSubPlayer(largerTeam: ScoredPlayer[], smallerTeam: ScoredPlayer[], weights: Weights): ScoredPlayer {
+  let bestSub = largerTeam[0]
+  let bestLoss = Infinity
+  for (const candidate of largerTeam) {
+    const coreTeam = largerTeam.filter(p => p.id !== candidate.id)
+    const loss = balanceLoss(coreTeam, smallerTeam, weights)
+    if (loss < bestLoss) {
+      bestLoss = loss
+      bestSub = candidate
+    }
+  }
+  return bestSub
+}
+
 // ─── SkillBalance ─────────────────────────────────────────────────────────────
 
-function SkillBalance({ teams }: { teams: Teams }) {
-  const avgA = skillAverages(teams.teamA)
-  const avgB = skillAverages(teams.teamB)
+function SkillBalance({ teams, subPlayerId }: { teams: Teams; subPlayerId: string | null }) {
+  const coreA = subPlayerId ? teams.teamA.filter(p => p.id !== subPlayerId) : teams.teamA
+  const coreB = subPlayerId ? teams.teamB.filter(p => p.id !== subPlayerId) : teams.teamB
+  const avgA = skillAverages(coreA)
+  const avgB = skillAverages(coreB)
+  const isUneven = teams.teamA.length !== teams.teamB.length
 
   const rows = [
     { label: 'Batting', a: avgA.batting, b: avgB.batting },
@@ -41,7 +60,12 @@ function SkillBalance({ teams }: { teams: Teams }) {
 
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
-      <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Skill Balance</h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Skill Balance</h3>
+        {isUneven && (
+          <span className="text-xs text-amber-600 font-medium">core teams only · sub excluded</span>
+        )}
+      </div>
       <div className="space-y-2">
         {rows.map(({ label, a, b }) => {
           const diff = Math.abs(a - b)
@@ -77,12 +101,15 @@ function TeamColumn({
   label,
   team,
   headerClass,
+  subPlayerId,
 }: {
   label: string
   team: ScoredPlayer[]
   headerClass: string
+  subPlayerId: string | null
 }) {
-  const avgs = skillAverages(team)
+  const coreTeam = subPlayerId ? team.filter(p => p.id !== subPlayerId) : team
+  const avgs = skillAverages(coreTeam)
 
   return (
     <div className="flex-1 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
@@ -93,7 +120,12 @@ function TeamColumn({
       <div className="p-3 flex flex-col gap-2 flex-1">
         {team.map(p => (
           <div key={p.id} className="bg-gray-50 rounded-xl p-3">
-            <div className="font-semibold text-gray-900 text-sm mb-2">{p.name}</div>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="font-semibold text-gray-900 text-sm">{p.name}</span>
+              {p.id === subPlayerId && (
+                <span className="text-xs font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Sub</span>
+              )}
+            </div>
             <div className="grid grid-cols-3 gap-1 text-center">
               {[
                 { label: 'Bat', val: p.batting_rating },
@@ -394,6 +426,14 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
     )
   }
 
+  const subPlayerId: string | null = (() => {
+    if (!teams) return null
+    if (teams.teamA.length === teams.teamB.length) return null
+    const larger = teams.teamA.length > teams.teamB.length ? teams.teamA : teams.teamB
+    const smaller = teams.teamA.length > teams.teamB.length ? teams.teamB : teams.teamA
+    return findSubPlayer(larger, smaller, weights).id
+  })()
+
   if (!teams) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-20 text-center">
@@ -421,12 +461,12 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
       </div>
 
       {/* Skill balance summary */}
-      <SkillBalance teams={teams} />
+      <SkillBalance teams={teams} subPlayerId={subPlayerId} />
 
       {/* Teams side-by-side */}
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
-        <TeamColumn label="⚡ Team A" team={teams.teamA} headerClass="bg-green-800" />
-        <TeamColumn label="🔥 Team B" team={teams.teamB} headerClass="bg-teal-700" />
+        <TeamColumn label="⚡ Team A" team={teams.teamA} headerClass="bg-green-800" subPlayerId={subPlayerId} />
+        <TeamColumn label="🔥 Team B" team={teams.teamB} headerClass="bg-teal-700" subPlayerId={subPlayerId} />
       </div>
 
       {/* Actions — admin only */}

@@ -24,6 +24,12 @@ export default function NavBar() {
         {user ? (
           <>
             <Link
+              href="/admin"
+              className="text-sm font-medium text-green-100 hover:text-white transition-colors hidden sm:inline"
+            >
+              Players
+            </Link>
+            <Link
               href="/admin/settings"
               className="text-sm font-medium text-green-100 hover:text-white transition-colors hidden sm:inline"
             >
