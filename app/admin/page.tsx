@@ -17,6 +17,7 @@ type Player = {
   bowling_rating: number
   fielding_rating: number
   is_active: boolean
+  preset_team: 'A' | 'B' | null
 }
 
 type PlayerForm = {
@@ -24,6 +25,7 @@ type PlayerForm = {
   batting_rating: number
   bowling_rating: number
   fielding_rating: number
+  preset_team: 'A' | 'B' | null
 }
 
 const DEFAULT_FORM: PlayerForm = {
@@ -31,6 +33,7 @@ const DEFAULT_FORM: PlayerForm = {
   batting_rating: 5,
   bowling_rating: 5,
   fielding_rating: 5,
+  preset_team: null,
 }
 
 // ─── RatingSlider ─────────────────────────────────────────────────────────────
@@ -87,7 +90,16 @@ function PlayerCard({
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 flex flex-col gap-3 hover:shadow-md transition-shadow">
       <div className="flex items-start justify-between gap-2">
-        <h3 className="font-bold text-gray-900 text-sm leading-snug break-words">{player.name}</h3>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <h3 className="font-bold text-gray-900 text-sm leading-snug break-words">{player.name}</h3>
+          {player.preset_team && (
+            <span className={`shrink-0 text-xs font-bold px-1.5 py-0.5 rounded ${
+              player.preset_team === 'A' ? 'bg-green-100 text-green-700' : 'bg-teal-100 text-teal-700'
+            }`}>
+              {player.preset_team === 'A' ? '⚡A' : '🔥B'}
+            </span>
+          )}
+        </div>
         <span className={`shrink-0 text-sm font-bold px-2 py-0.5 rounded-lg ${ratingBadge(overall)}`}>
           {overall.toFixed(1)}
         </span>
@@ -150,6 +162,7 @@ function PlayerModal({
             batting_rating: editing.batting_rating,
             bowling_rating: editing.bowling_rating,
             fielding_rating: editing.fielding_rating,
+            preset_team: editing.preset_team,
           }
         : DEFAULT_FORM
     )
@@ -206,6 +219,30 @@ function PlayerModal({
 
           <div className={`text-center text-sm font-semibold py-2 rounded-lg ${ratingBadge(preview)}`}>
             Overall score: {preview.toFixed(1)}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Pre-seed to Team</label>
+            <div className="grid grid-cols-3 gap-2">
+              {(['none', 'A', 'B'] as const).map(opt => (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => set('preset_team', opt === 'none' ? null : opt)}
+                  className={`py-2.5 rounded-xl font-bold text-sm transition-colors border-2 ${
+                    (opt === 'none' ? form.preset_team === null : form.preset_team === opt)
+                      ? opt === 'B'
+                        ? 'bg-teal-700 border-teal-700 text-white'
+                        : opt === 'A'
+                          ? 'bg-green-800 border-green-800 text-white'
+                          : 'bg-gray-700 border-gray-700 text-white'
+                      : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                  }`}
+                >
+                  {opt === 'none' ? 'None' : opt === 'A' ? '⚡ Team A' : '🔥 Team B'}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="flex gap-3">

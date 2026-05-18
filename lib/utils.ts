@@ -40,24 +40,29 @@ export function balanceLoss(a: Skillable[], b: Skillable[], w: Weights) {
 
 export function simulatedAnnealing<T extends Skillable>(
   players: T[],
-  w: Weights
+  w: Weights,
+  fixedA: T[] = [],
+  fixedB: T[] = []
 ): { teamA: T[]; teamB: T[] } {
+  if (players.length === 0) return { teamA: [...fixedA], teamB: [...fixedB] }
+
   const halfA = Math.ceil(players.length / 2)
   const shuffled = [...players].sort(() => Math.random() - 0.5)
   let teamA = shuffled.slice(0, halfA)
   let teamB = shuffled.slice(halfA)
 
-  let currentLoss = balanceLoss(teamA, teamB, w)
+  let currentLoss = balanceLoss([...fixedA, ...teamA], [...fixedB, ...teamB], w)
   let temp = 3.0
 
   for (let iter = 0; iter < 5000; iter++) {
+    if (teamB.length === 0) break
     const iA = Math.floor(Math.random() * teamA.length)
     const iB = Math.floor(Math.random() * teamB.length)
     const newA = [...teamA]
     const newB = [...teamB]
     ;[newA[iA], newB[iB]] = [newB[iB], newA[iA]]
 
-    const newLoss = balanceLoss(newA, newB, w)
+    const newLoss = balanceLoss([...fixedA, ...newA], [...fixedB, ...newB], w)
     const delta = newLoss - currentLoss
     if (delta < 0 || Math.random() < Math.exp(-delta / temp)) {
       teamA = newA
@@ -67,7 +72,7 @@ export function simulatedAnnealing<T extends Skillable>(
     temp *= 0.997
   }
 
-  return { teamA, teamB }
+  return { teamA: [...fixedA, ...teamA], teamB: [...fixedB, ...teamB] }
 }
 
 export function ratingBadge(val: number) {

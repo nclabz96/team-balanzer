@@ -17,6 +17,7 @@ type ScoredPlayer = {
   bowling_rating: number
   fielding_rating: number
   score: number
+  preset_team: 'A' | 'B' | null
 }
 
 type Teams = { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }
@@ -27,20 +28,26 @@ function scored(p: Omit<ScoredPlayer, 'score'>, w: Weights): ScoredPlayer {
   return { ...p, score: calcScore(p, w) }
 }
 
-// ─── findSubPlayer ────────────────────────────────────────────────────────────
+// ─── balanceWithSub ───────────────────────────────────────────────────────────
 
-function balanceWithSub(players: ScoredPlayer[], weights: Weights): Teams {
-  if (players.length % 2 === 0) return simulatedAnnealing(players, weights)
+function balanceWithSub(players: ScoredPlayer[], weights: Weights, keepPreseeded: boolean): Teams {
+  const seededA = keepPreseeded ? players.filter(p => p.preset_team === 'A') : []
+  const seededB = keepPreseeded ? players.filter(p => p.preset_team === 'B') : []
+  const free = keepPreseeded ? players.filter(p => !p.preset_team) : players
 
-  const sub = [...players].sort((a, b) => a.score - b.score)[0]
-  const rest = players.filter(p => p.id !== sub.id)
-  const { teamA, teamB } = simulatedAnnealing(rest, weights)
+  if (players.length % 2 !== 0) {
+    const subPool = free.length > 0 ? free : players
+    const sub = [...subPool].sort((a, b) => a.score - b.score)[0]
+    const freeWithoutSub = free.filter(p => p.id !== sub.id)
+    const { teamA, teamB } = simulatedAnnealing(freeWithoutSub, weights, seededA, seededB)
+    const totalA = teamA.reduce((s, p) => s + p.score, 0)
+    const totalB = teamB.reduce((s, p) => s + p.score, 0)
+    return totalA <= totalB
+      ? { teamA: [...teamA, sub], teamB }
+      : { teamA, teamB: [...teamB, sub] }
+  }
 
-  const totalA = teamA.reduce((s, p) => s + p.score, 0)
-  const totalB = teamB.reduce((s, p) => s + p.score, 0)
-  return totalA <= totalB
-    ? { teamA: [...teamA, sub], teamB }
-    : { teamA, teamB: [...teamB, sub] }
+  return simulatedAnnealing(free, weights, seededA, seededB)
 }
 
 // ─── SkillBalance ─────────────────────────────────────────────────────────────
@@ -124,6 +131,13 @@ function TeamColumn({
               <span className="font-semibold text-gray-900 text-sm">{p.name}</span>
               {p.id === subPlayerId && (
                 <span className="text-xs font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Sub</span>
+              )}
+              {p.preset_team && (
+                <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${
+                  p.preset_team === 'A' ? 'bg-green-100 text-green-700' : 'bg-teal-100 text-teal-700'
+                }`}>
+                  Seeded
+                </span>
               )}
             </div>
             <div className="grid grid-cols-3 gap-1 text-center">
@@ -292,6 +306,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
   const [fetching, setFetching] = useState(true)
   const [saving, setSaving] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
+  const [keepPreseeded, setKeepPreseeded] = useState(true)
 
   useEffect(() => {
     async function load() {
@@ -303,13 +318,14 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
           batting_rating: number
           bowling_rating: number
           fielding_rating: number
+          preset_team: 'A' | 'B' | null
         } | null
       }
 
       const [{ data: spData }, { data: savedTeams }, { data: allActive }] = await Promise.all([
         supabase
           .from('session_players')
-          .select('player_id, players(id, name, batting_rating, bowling_rating, fielding_rating)')
+          .select('player_id, players(id, name, batting_rating, bowling_rating, fielding_rating, preset_team)')
           .eq('session_id', id)
           .eq('was_present', true),
         supabase
@@ -318,7 +334,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
           .eq('session_id', id),
         supabase
           .from('players')
-          .select('id, name, batting_rating, bowling_rating, fielding_rating')
+          .select('id, name, batting_rating, bowling_rating, fielding_rating, preset_team')
           .eq('is_active', true),
       ])
 
@@ -326,14 +342,14 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
         .filter(row => row.players !== null)
         .map(row => scored(row.players!, weights))
 
+      type ActivePlayer = { id: string; name: string; batting_rating: number; bowling_rating: number; fielding_rating: number; preset_team: 'A' | 'B' | null }
+
       const sessionIds = new Set(sessionPlayers.map(p => p.id))
       setSessionPlayerIds(sessionIds)
 
       if (savedTeams && savedTeams.length > 0) {
         const savedIds = new Set(savedTeams.map(t => t.player_id))
-        const extraActive: ScoredPlayer[] = ((allActive ?? []) as {
-          id: string; name: string; batting_rating: number; bowling_rating: number; fielding_rating: number
-        }[])
+        const extraActive: ScoredPlayer[] = ((allActive ?? []) as ActivePlayer[])
           .filter(p => savedIds.has(p.id) && !sessionIds.has(p.id))
           .map(p => scored(p, weights))
 
@@ -347,18 +363,18 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
 
         const assignedIds = new Set(fullPool.map(p => p.id))
         setAvailablePlayers(
-          ((allActive ?? []) as { id: string; name: string; batting_rating: number; bowling_rating: number; fielding_rating: number }[])
+          ((allActive ?? []) as ActivePlayer[])
             .filter(p => !assignedIds.has(p.id))
             .map(p => scored(p, weights))
         )
       } else if (sessionPlayers.length >= 2) {
         setAllPlayers(sessionPlayers)
-        setTeams(balanceWithSub(sessionPlayers, weights))
+        setTeams(balanceWithSub(sessionPlayers, weights, true))
         setTeamsSaved(false)
 
         const assignedIds = new Set(sessionPlayers.map(p => p.id))
         setAvailablePlayers(
-          ((allActive ?? []) as { id: string; name: string; batting_rating: number; bowling_rating: number; fielding_rating: number }[])
+          ((allActive ?? []) as ActivePlayer[])
             .filter(p => !assignedIds.has(p.id))
             .map(p => scored(p, weights))
         )
@@ -374,7 +390,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
   const regenerate = () => {
     if (!allPlayers.length) return
     const rescored = allPlayers.map(p => scored(p, weights))
-    setTeams(balanceWithSub(rescored, weights))
+    setTeams(balanceWithSub(rescored, weights, keepPreseeded))
     setTeamsSaved(false)
   }
 
@@ -472,6 +488,17 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
       {!authLoading && (
         user ? (
           <div className="flex flex-col gap-3">
+            {allPlayers.some(p => p.preset_team) && (
+              <label className="flex items-center gap-2.5 cursor-pointer select-none px-1">
+                <input
+                  type="checkbox"
+                  checked={keepPreseeded}
+                  onChange={e => setKeepPreseeded(e.target.checked)}
+                  className="w-4 h-4 accent-green-700 cursor-pointer"
+                />
+                <span className="text-sm text-gray-700 font-medium">Keep pre-seeded players on their assigned teams</span>
+              </label>
+            )}
             <div className="flex flex-col sm:flex-row gap-3">
               <button
                 onClick={regenerate}
