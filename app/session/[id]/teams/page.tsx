@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useAuth } from '@/components/AuthProvider'
 import { useToast } from '@/components/ToastProvider'
 import { useSettings } from '@/components/SettingsProvider'
-import { calcScore, ratingBadge, skillAverages, balanceLoss, simulatedAnnealing, type Weights } from '@/lib/utils'
+import { calcScore, ratingBadge, skillAverages, balanceLoss, optimalBalance, type Weights } from '@/lib/utils'
 import Spinner from '@/components/Spinner'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -30,7 +30,12 @@ function scored(p: Omit<ScoredPlayer, 'score'>, w: Weights): ScoredPlayer {
 
 // ─── balanceWithSub ───────────────────────────────────────────────────────────
 
-function balanceWithSub(players: ScoredPlayer[], weights: Weights, keepPreseeded: boolean): Teams {
+function balanceWithSub(
+  players: ScoredPlayer[],
+  weights: Weights,
+  keepPreseeded: boolean,
+  maxSkillGap: number
+): Teams {
   const seededA = keepPreseeded ? players.filter(p => p.preset_team === 'A') : []
   const seededB = keepPreseeded ? players.filter(p => p.preset_team === 'B') : []
   const free = keepPreseeded ? players.filter(p => !p.preset_team) : players
@@ -39,20 +44,29 @@ function balanceWithSub(players: ScoredPlayer[], weights: Weights, keepPreseeded
     const subPool = free.length > 0 ? free : players
     const sub = [...subPool].sort((a, b) => a.score - b.score)[0]
     const freeWithoutSub = free.filter(p => p.id !== sub.id)
-    const { teamA, teamB } = simulatedAnnealing(freeWithoutSub, weights, seededA, seededB)
-    const totalA = teamA.reduce((s, p) => s + p.score, 0)
-    const totalB = teamB.reduce((s, p) => s + p.score, 0)
-    return totalA <= totalB
+    const { teamA, teamB } = optimalBalance(freeWithoutSub, weights, seededA, seededB, maxSkillGap)
+    // Skill-aware sub placement: try each team and pick the lower full-team loss.
+    const lossWithSubOnA = balanceLoss([...teamA, sub], teamB, weights, maxSkillGap)
+    const lossWithSubOnB = balanceLoss(teamA, [...teamB, sub], weights, maxSkillGap)
+    return lossWithSubOnA <= lossWithSubOnB
       ? { teamA: [...teamA, sub], teamB }
       : { teamA, teamB: [...teamB, sub] }
   }
 
-  return simulatedAnnealing(free, weights, seededA, seededB)
+  return optimalBalance(free, weights, seededA, seededB, maxSkillGap)
 }
 
 // ─── SkillBalance ─────────────────────────────────────────────────────────────
 
-function SkillBalance({ teams, subPlayerId }: { teams: Teams; subPlayerId: string | null }) {
+function SkillBalance({
+  teams,
+  subPlayerId,
+  maxSkillGap,
+}: {
+  teams: Teams
+  subPlayerId: string | null
+  maxSkillGap: number
+}) {
   const coreA = subPlayerId ? teams.teamA.filter(p => p.id !== subPlayerId) : teams.teamA
   const coreB = subPlayerId ? teams.teamB.filter(p => p.id !== subPlayerId) : teams.teamB
   const avgA = skillAverages(coreA)
@@ -65,6 +79,9 @@ function SkillBalance({ teams, subPlayerId }: { teams: Teams; subPlayerId: strin
     { label: 'Fielding', a: avgA.fielding, b: avgB.fielding },
   ]
 
+  // "Matched" if well under cap, "Close" if within cap, "Gap" if above cap.
+  const matchedThreshold = maxSkillGap / 3
+
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
       <div className="flex items-center justify-between mb-3">
@@ -76,8 +93,14 @@ function SkillBalance({ teams, subPlayerId }: { teams: Teams; subPlayerId: strin
       <div className="space-y-2">
         {rows.map(({ label, a, b }) => {
           const diff = Math.abs(a - b)
-          const gapColor = diff < 0.5 ? 'text-green-600' : diff < 1.5 ? 'text-amber-500' : 'text-red-500'
-          const gapLabel = diff < 0.5 ? 'Matched' : diff < 1.5 ? 'Close' : 'Gap'
+          const gapColor =
+            diff < matchedThreshold ? 'text-green-600'
+            : diff <= maxSkillGap   ? 'text-amber-500'
+            :                         'text-red-500'
+          const gapLabel =
+            diff < matchedThreshold ? 'Matched'
+            : diff <= maxSkillGap   ? 'Close'
+            :                         'Gap'
           return (
             <div key={label} className="flex items-center gap-3 text-sm">
               <span className="w-14 text-xs text-gray-500 shrink-0">{label}</span>
@@ -180,12 +203,14 @@ function AddPlayerModal({
   available,
   teams,
   weights,
+  maxSkillGap,
   onAdd,
   onClose,
 }: {
   available: ScoredPlayer[]
   teams: Teams
   weights: Weights
+  maxSkillGap: number
   onAdd: (player: ScoredPlayer, team: 'A' | 'B') => void
   onClose: () => void
 }) {
@@ -200,8 +225,8 @@ function AddPlayerModal({
     // Pick team that results in lower per-skill imbalance after adding the player
     const player = available.find(p => p.id === selectedId)
     if (!player) return 'A'
-    const lossIfA = balanceLoss([...teams.teamA, player], teams.teamB, weights)
-    const lossIfB = balanceLoss(teams.teamA, [...teams.teamB, player], weights)
+    const lossIfA = balanceLoss([...teams.teamA, player], teams.teamB, weights, maxSkillGap)
+    const lossIfB = balanceLoss(teams.teamA, [...teams.teamB, player], weights, maxSkillGap)
     return lossIfA <= lossIfB ? 'A' : 'B'
   }
 
@@ -296,7 +321,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
   const { id } = params
   const { user, supabase, isLoading: authLoading } = useAuth()
   const { showToast } = useToast()
-  const { weights } = useSettings()
+  const { weights, maxSkillGap } = useSettings()
 
   const [sessionPlayerIds, setSessionPlayerIds] = useState<Set<string>>(new Set())
   const [allPlayers, setAllPlayers] = useState<ScoredPlayer[]>([])
@@ -369,7 +394,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
         )
       } else if (sessionPlayers.length >= 2) {
         setAllPlayers(sessionPlayers)
-        setTeams(balanceWithSub(sessionPlayers, weights, true))
+        setTeams(balanceWithSub(sessionPlayers, weights, true, maxSkillGap))
         setTeamsSaved(false)
 
         const assignedIds = new Set(sessionPlayers.map(p => p.id))
@@ -390,7 +415,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
   const regenerate = () => {
     if (!allPlayers.length) return
     const rescored = allPlayers.map(p => scored(p, weights))
-    setTeams(balanceWithSub(rescored, weights, keepPreseeded))
+    setTeams(balanceWithSub(rescored, weights, keepPreseeded, maxSkillGap))
     setTeamsSaved(false)
   }
 
@@ -476,7 +501,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
       </div>
 
       {/* Skill balance summary */}
-      <SkillBalance teams={teams} subPlayerId={subPlayerId} />
+      <SkillBalance teams={teams} subPlayerId={subPlayerId} maxSkillGap={maxSkillGap} />
 
       {/* Teams side-by-side */}
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
@@ -549,6 +574,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
           available={availablePlayers}
           teams={teams}
           weights={weights}
+          maxSkillGap={maxSkillGap}
           onAdd={addPlayerToTeam}
           onClose={() => setShowAddModal(false)}
         />

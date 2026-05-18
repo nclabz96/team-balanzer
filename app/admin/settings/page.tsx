@@ -5,7 +5,11 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/AuthProvider'
 import { useToast } from '@/components/ToastProvider'
 import { useSettings } from '@/components/SettingsProvider'
+import { DEFAULT_MAX_SKILL_GAP } from '@/lib/utils'
 import Spinner from '@/components/Spinner'
+
+const MIN_SKILL_GAP = 0.5
+const MAX_SKILL_GAP_LIMIT = 3.0
 
 function WeightInput({
   label,
@@ -60,6 +64,7 @@ export default function SettingsPage() {
   const [batting, setBatting] = useState(40)
   const [bowling, setBowling] = useState(40)
   const [fielding, setFielding] = useState(20)
+  const [maxSkillGap, setMaxSkillGap] = useState<number>(DEFAULT_MAX_SKILL_GAP)
   const [fetching, setFetching] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -71,7 +76,7 @@ export default function SettingsPage() {
     if (!user) return
     supabase
       .from('settings')
-      .select('batting_weight, bowling_weight, fielding_weight')
+      .select('batting_weight, bowling_weight, fielding_weight, max_skill_gap')
       .eq('id', 1)
       .single()
       .then(({ data }) => {
@@ -79,6 +84,10 @@ export default function SettingsPage() {
           setBatting(Math.round(Number(data.batting_weight) * 100))
           setBowling(Math.round(Number(data.bowling_weight) * 100))
           setFielding(Math.round(Number(data.fielding_weight) * 100))
+          const gap = data.max_skill_gap
+          if (gap !== null && gap !== undefined && !Number.isNaN(Number(gap))) {
+            setMaxSkillGap(Number(gap))
+          }
         }
         setFetching(false)
       })
@@ -87,6 +96,8 @@ export default function SettingsPage() {
   const total = batting + bowling + fielding
   const isValid = total === 100
   const totalColor = isValid ? 'text-green-700' : 'text-red-600'
+
+  const clampedGap = Math.min(MAX_SKILL_GAP_LIMIT, Math.max(MIN_SKILL_GAP, maxSkillGap))
 
   const handleSave = async () => {
     if (!isValid || saving) return
@@ -97,6 +108,7 @@ export default function SettingsPage() {
         batting_weight: batting / 100,
         bowling_weight: bowling / 100,
         fielding_weight: fielding / 100,
+        max_skill_gap: clampedGap,
       })
       .eq('id', 1)
 
@@ -165,6 +177,48 @@ export default function SettingsPage() {
                   </span>
                 )}
               </div>
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-gray-100">
+            <h2 className="font-bold text-gray-900 mb-1">Max Skill Gap</h2>
+            <p className="text-xs text-gray-400 mb-4">
+              The balancing algorithm tries to keep every individual skill
+              (batting / bowling / fielding) within this gap between teams.
+              Smaller values are stricter; larger values allow more flexibility.
+            </p>
+            <div className="bg-gray-50 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-1">
+                <div>
+                  <div className="text-sm font-semibold text-gray-900">Per-skill gap cap</div>
+                  <div className="text-xs text-gray-400">
+                    Default {DEFAULT_MAX_SKILL_GAP.toFixed(1)} · range {MIN_SKILL_GAP.toFixed(1)}–{MAX_SKILL_GAP_LIMIT.toFixed(1)}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min={MIN_SKILL_GAP}
+                    max={MAX_SKILL_GAP_LIMIT}
+                    step={0.1}
+                    value={maxSkillGap}
+                    onChange={e => {
+                      const v = parseFloat(e.target.value)
+                      setMaxSkillGap(Number.isNaN(v) ? DEFAULT_MAX_SKILL_GAP : v)
+                    }}
+                    className="w-20 text-right px-2 py-1.5 border border-gray-300 rounded-lg text-sm font-bold focus:outline-none focus:ring-2 focus:ring-green-700 focus:border-transparent tabular-nums"
+                  />
+                </div>
+              </div>
+              <input
+                type="range"
+                min={MIN_SKILL_GAP}
+                max={MAX_SKILL_GAP_LIMIT}
+                step={0.1}
+                value={clampedGap}
+                onChange={e => setMaxSkillGap(parseFloat(e.target.value))}
+                className="w-full h-2 accent-green-700 cursor-pointer mt-2"
+              />
             </div>
           </div>
 

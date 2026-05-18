@@ -10,6 +10,20 @@ export const DEFAULT_WEIGHTS: Weights = {
   fielding: 0.2,
 }
 
+export const DEFAULT_MAX_SKILL_GAP = 1.5
+
+// Hybrid loss tunables.
+// STYLE_PENALTY weights per-skill spread relative to the overall score gap.
+// Higher → more punishment for "batting team vs bowling team" type splits.
+const STYLE_PENALTY = 0.3
+// CAP_PENALTY is multiplied by the squared overage of any single skill gap
+// above the configured maxSkillGap. Large enough to dominate when feasible,
+// but never produces NaN/Infinity so the optimiser always returns a result.
+const CAP_PENALTY = 100
+
+// Brute force becomes expensive past C(20, 10) ≈ 184k; above this we use SA.
+const BRUTE_FORCE_LIMIT = 20
+
 export function calcScore(
   p: { batting_rating: number; bowling_rating: number; fielding_rating: number },
   w: Weights = DEFAULT_WEIGHTS
@@ -28,21 +42,110 @@ export function skillAverages(team: Skillable[]) {
   }
 }
 
-export function balanceLoss(a: Skillable[], b: Skillable[], w: Weights) {
+/**
+ * Hybrid balance loss. Combines three signals:
+ *   1. Squared overall weighted score gap — lets signed per-skill gaps cancel.
+ *   2. Weighted per-skill squared spread — gently discourages style mismatch.
+ *   3. Soft cap penalty on any single-skill gap above maxSkillGap.
+ */
+export function balanceLoss(
+  a: Skillable[],
+  b: Skillable[],
+  w: Weights,
+  maxSkillGap: number = DEFAULT_MAX_SKILL_GAP
+) {
   const avgA = skillAverages(a)
   const avgB = skillAverages(b)
-  return (
-    w.batting  * Math.abs(avgA.batting  - avgB.batting)  +
-    w.bowling  * Math.abs(avgA.bowling  - avgB.bowling)  +
-    w.fielding * Math.abs(avgA.fielding - avgB.fielding)
-  )
+
+  const dBat   = avgA.batting  - avgB.batting
+  const dBowl  = avgA.bowling  - avgB.bowling
+  const dField = avgA.fielding - avgB.fielding
+
+  const overallGap = w.batting * dBat + w.bowling * dBowl + w.fielding * dField
+
+  const perSkillSpread =
+    w.batting  * dBat   * dBat  +
+    w.bowling  * dBowl  * dBowl +
+    w.fielding * dField * dField
+
+  const overage = (d: number) => Math.max(0, Math.abs(d) - maxSkillGap)
+  const oBat   = overage(dBat)
+  const oBowl  = overage(dBowl)
+  const oField = overage(dField)
+  const capPenalty = CAP_PENALTY * (oBat * oBat + oBowl * oBowl + oField * oField)
+
+  return overallGap * overallGap + STYLE_PENALTY * perSkillSpread + capPenalty
+}
+
+/**
+ * Enumerate every C(free.length, halfA) split of `free`, prepending fixed players
+ * to each side. Returns the split with minimum balance loss.
+ */
+function bruteForceSplit<T extends Skillable>(
+  free: T[],
+  w: Weights,
+  maxSkillGap: number,
+  fixedA: T[],
+  fixedB: T[]
+): { teamA: T[]; teamB: T[] } {
+  const n = free.length
+  const halfA = Math.ceil(n / 2)
+
+  let bestLoss = Infinity
+  let bestIndices: number[] = []
+
+  const indices = new Array<number>(halfA)
+
+  function recurse(start: number, depth: number) {
+    if (depth === halfA) {
+      const aPicked: T[] = []
+      const bPicked: T[] = []
+      const inA = new Set(indices)
+      for (let i = 0; i < n; i++) {
+        if (inA.has(i)) aPicked.push(free[i])
+        else bPicked.push(free[i])
+      }
+      const loss = balanceLoss(
+        [...fixedA, ...aPicked],
+        [...fixedB, ...bPicked],
+        w,
+        maxSkillGap
+      )
+      if (loss < bestLoss) {
+        bestLoss = loss
+        bestIndices = [...indices]
+      }
+      return
+    }
+    const remaining = halfA - depth
+    for (let i = start; i <= n - remaining; i++) {
+      indices[depth] = i
+      recurse(i + 1, depth + 1)
+    }
+  }
+
+  if (n === 0) {
+    return { teamA: [...fixedA], teamB: [...fixedB] }
+  }
+
+  recurse(0, 0)
+
+  const inA = new Set(bestIndices)
+  const teamA: T[] = []
+  const teamB: T[] = []
+  for (let i = 0; i < n; i++) {
+    if (inA.has(i)) teamA.push(free[i])
+    else teamB.push(free[i])
+  }
+  return { teamA: [...fixedA, ...teamA], teamB: [...fixedB, ...teamB] }
 }
 
 export function simulatedAnnealing<T extends Skillable>(
   players: T[],
   w: Weights,
   fixedA: T[] = [],
-  fixedB: T[] = []
+  fixedB: T[] = [],
+  maxSkillGap: number = DEFAULT_MAX_SKILL_GAP
 ): { teamA: T[]; teamB: T[] } {
   if (players.length === 0) return { teamA: [...fixedA], teamB: [...fixedB] }
 
@@ -51,7 +154,7 @@ export function simulatedAnnealing<T extends Skillable>(
   let teamA = shuffled.slice(0, halfA)
   let teamB = shuffled.slice(halfA)
 
-  let currentLoss = balanceLoss([...fixedA, ...teamA], [...fixedB, ...teamB], w)
+  let currentLoss = balanceLoss([...fixedA, ...teamA], [...fixedB, ...teamB], w, maxSkillGap)
   let temp = 3.0
 
   for (let iter = 0; iter < 5000; iter++) {
@@ -62,7 +165,7 @@ export function simulatedAnnealing<T extends Skillable>(
     const newB = [...teamB]
     ;[newA[iA], newB[iB]] = [newB[iB], newA[iA]]
 
-    const newLoss = balanceLoss([...fixedA, ...newA], [...fixedB, ...newB], w)
+    const newLoss = balanceLoss([...fixedA, ...newA], [...fixedB, ...newB], w, maxSkillGap)
     const delta = newLoss - currentLoss
     if (delta < 0 || Math.random() < Math.exp(-delta / temp)) {
       teamA = newA
@@ -73,6 +176,24 @@ export function simulatedAnnealing<T extends Skillable>(
   }
 
   return { teamA: [...fixedA, ...teamA], teamB: [...fixedB, ...teamB] }
+}
+
+/**
+ * Optimal-or-near-optimal balance: uses exact brute-force search for small
+ * free-player counts (deterministic, guaranteed minimum loss), and falls back
+ * to simulated annealing for larger pools.
+ */
+export function optimalBalance<T extends Skillable>(
+  players: T[],
+  w: Weights,
+  fixedA: T[] = [],
+  fixedB: T[] = [],
+  maxSkillGap: number = DEFAULT_MAX_SKILL_GAP
+): { teamA: T[]; teamB: T[] } {
+  if (players.length <= BRUTE_FORCE_LIMIT) {
+    return bruteForceSplit(players, w, maxSkillGap, fixedA, fixedB)
+  }
+  return simulatedAnnealing(players, w, fixedA, fixedB, maxSkillGap)
 }
 
 export function ratingBadge(val: number) {
