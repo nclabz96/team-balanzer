@@ -140,11 +140,15 @@ function TeamColumn({
   team,
   headerClass,
   subPlayerId,
+  canEdit,
+  onRemove,
 }: {
   label: string
   team: ScoredPlayer[]
   headerClass: string
   subPlayerId: string | null
+  canEdit?: boolean
+  onRemove?: (playerId: string) => void
 }) {
   const coreTeam = subPlayerId ? team.filter(p => p.id !== subPlayerId) : team
   const avgs = skillAverages(coreTeam)
@@ -157,8 +161,20 @@ function TeamColumn({
 
       <div className="p-3 flex flex-col gap-2 flex-1">
         {team.map(p => (
-          <div key={p.id} className="bg-gray-50 rounded-xl p-3">
-            <div className="flex items-center gap-2 mb-2">
+          <div key={p.id} className="bg-gray-50 rounded-xl p-3 relative">
+            {canEdit && onRemove && (
+              <button
+                type="button"
+                onClick={() => onRemove(p.id)}
+                className="absolute top-2 right-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-md p-1 transition-colors"
+                aria-label={`Remove ${p.name}`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+            <div className="flex items-center gap-2 mb-2 pr-6">
               <span className="font-semibold text-gray-900 text-sm">{p.name}</span>
               {p.id === subPlayerId && (
                 <span className="text-xs font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Sub</span>
@@ -470,11 +486,53 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
     setTeamsSaved(false)
   }
 
+  const removePlayer = (playerId: string) => {
+    if (allPlayers.length <= 2) {
+      showToast('Need at least 2 players to form teams', 'error')
+      return
+    }
+
+    const player = allPlayers.find(p => p.id === playerId)
+    if (!player) return
+
+    setTeams(prev => {
+      if (!prev) return prev
+      return {
+        teamA: prev.teamA.filter(p => p.id !== playerId),
+        teamB: prev.teamB.filter(p => p.id !== playerId),
+      }
+    })
+    setAllPlayers(prev => prev.filter(p => p.id !== playerId))
+
+    // Players added from the squad pool can be re-added later.
+    if (!sessionPlayerIds.has(playerId)) {
+      setAvailablePlayers(prev =>
+        [...prev, player].sort((a, b) => a.name.localeCompare(b.name))
+      )
+    }
+
+    setTeamsSaved(false)
+    showToast(`${player.name} removed — regenerate teams when ready`)
+  }
+
+  const canEditTeams = !authLoading && !!user
+
   const saveTeams = async () => {
     if (!teams || saving) return
     setSaving(true)
 
-    const newToSession = [...teams.teamA, ...teams.teamB].filter(p => !sessionPlayerIds.has(p.id))
+    const poolIds = new Set(allPlayers.map(p => p.id))
+    const removedFromSession = Array.from(sessionPlayerIds).filter(pid => !poolIds.has(pid))
+    if (removedFromSession.length > 0) {
+      await supabase.from('session_players').delete().eq('session_id', id).in('player_id', removedFromSession)
+      setSessionPlayerIds(prev => {
+        const next = new Set(prev)
+        removedFromSession.forEach(pid => next.delete(pid))
+        return next
+      })
+    }
+
+    const newToSession = allPlayers.filter(p => !sessionPlayerIds.has(p.id))
     if (newToSession.length > 0) {
       await supabase.from('session_players').upsert(
         newToSession.map(p => ({ session_id: id, player_id: p.id, was_present: true })),
@@ -489,8 +547,12 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
 
     await supabase.from('teams').delete().eq('session_id', id)
     await supabase.from('teams').insert([
-      ...teams.teamA.map(p => ({ session_id: id, team_number: 1, player_id: p.id })),
-      ...teams.teamB.map(p => ({ session_id: id, team_number: 2, player_id: p.id })),
+      ...allPlayers
+        .filter(p => teams.teamA.some(t => t.id === p.id))
+        .map(p => ({ session_id: id, team_number: 1, player_id: p.id })),
+      ...allPlayers
+        .filter(p => teams.teamB.some(t => t.id === p.id))
+        .map(p => ({ session_id: id, team_number: 2, player_id: p.id })),
     ])
 
     setTeamsSaved(true)
@@ -544,8 +606,22 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
 
       {/* Teams side-by-side */}
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
-        <TeamColumn label="⚡ Team A" team={teams.teamA} headerClass="bg-green-800" subPlayerId={subPlayerId} />
-        <TeamColumn label="🔥 Team B" team={teams.teamB} headerClass="bg-teal-700" subPlayerId={subPlayerId} />
+        <TeamColumn
+          label="⚡ Team A"
+          team={teams.teamA}
+          headerClass="bg-green-800"
+          subPlayerId={subPlayerId}
+          canEdit={canEditTeams}
+          onRemove={removePlayer}
+        />
+        <TeamColumn
+          label="🔥 Team B"
+          team={teams.teamB}
+          headerClass="bg-teal-700"
+          subPlayerId={subPlayerId}
+          canEdit={canEditTeams}
+          onRemove={removePlayer}
+        />
       </div>
 
       {/* Actions — admin only */}
@@ -566,7 +642,8 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
             <div className="flex flex-col sm:flex-row gap-3">
               <button
                 onClick={regenerate}
-                className="flex-1 py-3 rounded-xl border-2 border-green-800 text-green-800 font-semibold text-sm hover:bg-green-50 active:bg-green-100 transition-colors"
+                disabled={allPlayers.length < 2}
+                className="flex-1 py-3 rounded-xl border-2 border-green-800 text-green-800 font-semibold text-sm hover:bg-green-50 active:bg-green-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 ↺ Regenerate Teams
               </button>
