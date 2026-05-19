@@ -78,7 +78,17 @@ export function balanceLoss(
 }
 
 /**
- * Enumerate every C(free.length, halfA) split of `free`, prepending fixed players
+ * How many free players belong on team A so both sides have equal headcount
+ * (given fixed/seeded players already on each side).
+ */
+export function freeCountForTeamA(fixedA: number, fixedB: number, freeCount: number): number {
+  const total = fixedA + fixedB + freeCount
+  const targetA = Math.floor(total / 2)
+  return targetA - fixedA
+}
+
+/**
+ * Enumerate every C(free.length, freeToA) split of `free`, prepending fixed players
  * to each side. Returns the split with minimum balance loss.
  */
 function bruteForceSplit<T extends Skillable>(
@@ -89,15 +99,15 @@ function bruteForceSplit<T extends Skillable>(
   fixedB: T[]
 ): { teamA: T[]; teamB: T[] } {
   const n = free.length
-  const halfA = Math.ceil(n / 2)
+  const freeToA = Math.max(0, Math.min(n, freeCountForTeamA(fixedA.length, fixedB.length, n)))
 
   let bestLoss = Infinity
   let bestIndices: number[] = []
 
-  const indices = new Array<number>(halfA)
+  const indices = new Array<number>(freeToA)
 
   function recurse(start: number, depth: number) {
-    if (depth === halfA) {
+    if (depth === freeToA) {
       const aPicked: T[] = []
       const bPicked: T[] = []
       const inA = new Set(indices)
@@ -117,7 +127,7 @@ function bruteForceSplit<T extends Skillable>(
       }
       return
     }
-    const remaining = halfA - depth
+    const remaining = freeToA - depth
     for (let i = start; i <= n - remaining; i++) {
       indices[depth] = i
       recurse(i + 1, depth + 1)
@@ -149,10 +159,11 @@ export function simulatedAnnealing<T extends Skillable>(
 ): { teamA: T[]; teamB: T[] } {
   if (players.length === 0) return { teamA: [...fixedA], teamB: [...fixedB] }
 
-  const halfA = Math.ceil(players.length / 2)
+  const n = players.length
+  const freeToA = Math.max(0, Math.min(n, freeCountForTeamA(fixedA.length, fixedB.length, n)))
   const shuffled = [...players].sort(() => Math.random() - 0.5)
-  let teamA = shuffled.slice(0, halfA)
-  let teamB = shuffled.slice(halfA)
+  let teamA = shuffled.slice(0, freeToA)
+  let teamB = shuffled.slice(freeToA)
 
   let currentLoss = balanceLoss([...fixedA, ...teamA], [...fixedB, ...teamB], w, maxSkillGap)
   let temp = 3.0

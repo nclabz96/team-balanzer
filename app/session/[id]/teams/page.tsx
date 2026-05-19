@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
+import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/components/AuthProvider'
 import { useToast } from '@/components/ToastProvider'
@@ -46,6 +47,13 @@ function balanceWithSub(
     const freeWithoutSub = free.filter(p => p.id !== sub.id)
     const { teamA, teamB } = optimalBalance(freeWithoutSub, weights, seededA, seededB, maxSkillGap)
     // Skill-aware sub placement: try each team and pick the lower full-team loss.
+    // Prefer the smaller side for the sub, then break ties by skill balance.
+    if (teamA.length < teamB.length) {
+      return { teamA: [...teamA, sub], teamB }
+    }
+    if (teamB.length < teamA.length) {
+      return { teamA, teamB: [...teamB, sub] }
+    }
     const lossWithSubOnA = balanceLoss([...teamA, sub], teamB, weights, maxSkillGap)
     const lossWithSubOnB = balanceLoss(teamA, [...teamB, sub], weights, maxSkillGap)
     return lossWithSubOnA <= lossWithSubOnB
@@ -333,6 +341,36 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
   const [showAddModal, setShowAddModal] = useState(false)
   const [keepPreseeded, setKeepPreseeded] = useState(true)
 
+  const teamsSavedRef = useRef(teamsSaved)
+  teamsSavedRef.current = teamsSaved
+  const hadSavedOnLoadRef = useRef(false)
+
+  const teamsPath = `/session/${id}/teams`
+
+  const discardSession = useCallback(async () => {
+    if (teamsSavedRef.current || hadSavedOnLoadRef.current) return
+    await supabase.from('teams').delete().eq('session_id', id)
+    await supabase.from('session_players').delete().eq('session_id', id)
+    await supabase.from('sessions').delete().eq('id', id)
+  }, [supabase, id])
+
+  const pathname = usePathname()
+  const wasOnTeamsRef = useRef(false)
+
+  useEffect(() => {
+    const onTeamsPage = pathname === teamsPath
+    if (wasOnTeamsRef.current && !onTeamsPage) {
+      discardSession()
+    }
+    wasOnTeamsRef.current = onTeamsPage
+  }, [pathname, teamsPath, discardSession])
+
+  useEffect(() => {
+    const onPageHide = () => { discardSession() }
+    window.addEventListener('pagehide', onPageHide)
+    return () => window.removeEventListener('pagehide', onPageHide)
+  }, [discardSession])
+
   useEffect(() => {
     async function load() {
       type SpRow = {
@@ -373,6 +411,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
       setSessionPlayerIds(sessionIds)
 
       if (savedTeams && savedTeams.length > 0) {
+        hadSavedOnLoadRef.current = true
         const savedIds = new Set(savedTeams.map(t => t.player_id))
         const extraActive: ScoredPlayer[] = ((allActive ?? []) as ActivePlayer[])
           .filter(p => savedIds.has(p.id) && !sessionIds.has(p.id))

@@ -142,7 +142,7 @@ export default function HomePage() {
           .order('name'),
         supabase
           .from('sessions')
-          .select('id, session_date, notes, created_at')
+          .select('id, session_date, notes, created_at, teams!inner(id)')
           .order('session_date', { ascending: false })
           .order('created_at', { ascending: false })
           .limit(10),
