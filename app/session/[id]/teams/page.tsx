@@ -29,6 +29,14 @@ function scored(p: Omit<ScoredPlayer, 'score'>, w: Weights): ScoredPlayer {
   return { ...p, score: calcScore(p, w) }
 }
 
+function sortPlayersByName(players: ScoredPlayer[]) {
+  return [...players].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function sortPlayersByScoreDesc(players: ScoredPlayer[]) {
+  return [...players].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+}
+
 // ─── balanceWithSub ───────────────────────────────────────────────────────────
 
 function balanceWithSub(
@@ -151,6 +159,7 @@ function TeamColumn({
   onRemove?: (playerId: string) => void
 }) {
   const coreTeam = subPlayerId ? team.filter(p => p.id !== subPlayerId) : team
+  const displayTeam = sortPlayersByScoreDesc(team)
   const avgs = skillAverages(coreTeam)
 
   return (
@@ -160,7 +169,7 @@ function TeamColumn({
       </div>
 
       <div className="p-3 flex flex-col gap-2 flex-1">
-        {team.map(p => (
+        {displayTeam.map(p => (
           <div key={p.id} className="bg-gray-50 rounded-xl p-3 relative">
             {canEdit && onRemove && (
               <button
@@ -238,7 +247,8 @@ function AddPlayerModal({
   onAdd: (player: ScoredPlayer, team: 'A' | 'B') => void
   onClose: () => void
 }) {
-  const [selectedId, setSelectedId] = useState(available[0]?.id ?? '')
+  const sortedAvailable = sortPlayersByName(available)
+  const [selectedId, setSelectedId] = useState(sortedAvailable[0]?.id ?? '')
   const [targetTeam, setTargetTeam] = useState<'A' | 'B' | 'auto'>('auto')
 
   const resolveTeam = (): 'A' | 'B' => {
@@ -247,7 +257,7 @@ function AddPlayerModal({
       return teams.teamA.length <= teams.teamB.length ? 'A' : 'B'
     }
     // Pick team that results in lower per-skill imbalance after adding the player
-    const player = available.find(p => p.id === selectedId)
+    const player = sortedAvailable.find(p => p.id === selectedId)
     if (!player) return 'A'
     const lossIfA = balanceLoss([...teams.teamA, player], teams.teamB, weights, maxSkillGap)
     const lossIfB = balanceLoss(teams.teamA, [...teams.teamB, player], weights, maxSkillGap)
@@ -255,7 +265,7 @@ function AddPlayerModal({
   }
 
   const handleAdd = () => {
-    const player = available.find(p => p.id === selectedId)
+    const player = sortedAvailable.find(p => p.id === selectedId)
     if (!player) return
     onAdd(player, resolveTeam())
     onClose()
@@ -286,7 +296,7 @@ function AddPlayerModal({
               onChange={e => setSelectedId(e.target.value)}
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-700 focus:border-transparent bg-white"
             >
-              {available.map(p => (
+              {sortedAvailable.map(p => (
                 <option key={p.id} value={p.id}>
                   {p.name} (Overall: {p.score.toFixed(1)})
                 </option>
@@ -443,9 +453,11 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
 
         const assignedIds = new Set(fullPool.map(p => p.id))
         setAvailablePlayers(
-          ((allActive ?? []) as ActivePlayer[])
-            .filter(p => !assignedIds.has(p.id))
-            .map(p => scored(p, weights))
+          sortPlayersByName(
+            ((allActive ?? []) as ActivePlayer[])
+              .filter(p => !assignedIds.has(p.id))
+              .map(p => scored(p, weights))
+          )
         )
       } else if (sessionPlayers.length >= 2) {
         setAllPlayers(sessionPlayers)
@@ -454,9 +466,11 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
 
         const assignedIds = new Set(sessionPlayers.map(p => p.id))
         setAvailablePlayers(
-          ((allActive ?? []) as ActivePlayer[])
-            .filter(p => !assignedIds.has(p.id))
-            .map(p => scored(p, weights))
+          sortPlayersByName(
+            ((allActive ?? []) as ActivePlayer[])
+              .filter(p => !assignedIds.has(p.id))
+              .map(p => scored(p, weights))
+          )
         )
       }
 
@@ -504,12 +518,10 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
     })
     setAllPlayers(prev => prev.filter(p => p.id !== playerId))
 
-    // Players added from the squad pool can be re-added later.
-    if (!sessionPlayerIds.has(playerId)) {
-      setAvailablePlayers(prev =>
-        [...prev, player].sort((a, b) => a.name.localeCompare(b.name))
-      )
-    }
+    setAvailablePlayers(prev => {
+      if (prev.some(p => p.id === playerId)) return prev
+      return sortPlayersByName([...prev, player])
+    })
 
     setTeamsSaved(false)
     showToast(`${player.name} removed — regenerate teams when ready`)

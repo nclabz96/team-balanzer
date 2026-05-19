@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from '@/lib/supabase'
+import { calcScore, DEFAULT_WEIGHTS } from '@/lib/utils'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
@@ -52,6 +53,13 @@ function ratingColor(val: number) {
   if (val >= 7) return 'text-green-600'
   if (val >= 4) return 'text-amber-500'
   return 'text-red-500'
+}
+
+function sortByOverallDesc(players: Player[]) {
+  return [...players].sort((a, b) => {
+    const diff = calcScore(b, DEFAULT_WEIGHTS) - calcScore(a, DEFAULT_WEIGHTS)
+    return diff !== 0 ? diff : a.name.localeCompare(b.name)
+  })
 }
 
 function delta(session: number, current: number) {
@@ -203,15 +211,19 @@ export default async function SessionDetailPage({ params }: { params: { id: stri
   const scoresMap = new Map<string, SessionScore>()
   scores.forEach(s => scoresMap.set(s.player_id, s))
 
-  const teamA: Player[] = teams
-    .filter(t => t.team_number === 1)
-    .map(t => t.players)
-    .filter((p): p is Player => Boolean(p))
+  const teamA: Player[] = sortByOverallDesc(
+    teams
+      .filter(t => t.team_number === 1)
+      .map(t => t.players)
+      .filter((p): p is Player => Boolean(p))
+  )
 
-  const teamB: Player[] = teams
-    .filter(t => t.team_number === 2)
-    .map(t => t.players)
-    .filter((p): p is Player => Boolean(p))
+  const teamB: Player[] = sortByOverallDesc(
+    teams
+      .filter(t => t.team_number === 2)
+      .map(t => t.players)
+      .filter((p): p is Player => Boolean(p))
+  )
 
   const teamsExist = teams.length > 0
   const hasRatings = scores.some(s => s.batting_score !== null)
