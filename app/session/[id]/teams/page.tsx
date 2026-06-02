@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { useAuth } from '@/components/AuthProvider'
 import { useToast } from '@/components/ToastProvider'
 import { useSettings } from '@/components/SettingsProvider'
-import { calcScore, ratingBadge, skillAverages, balanceLoss, optimalBalance, type Weights } from '@/lib/utils'
+import { calcScore, ratingBadge, skillAverages, balanceLoss, optimalBalance, isBowler, type Weights } from '@/lib/utils'
 import Spinner from '@/components/Spinner'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -19,6 +19,8 @@ type ScoredPlayer = {
   fielding_rating: number
   score: number
   preset_team: 'A' | 'B' | null
+  can_bowl: boolean
+  needs_runner: boolean
 }
 
 type Teams = { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }
@@ -88,12 +90,13 @@ function SkillBalance({
   const avgA = skillAverages(coreA)
   const avgB = skillAverages(coreB)
   const isUneven = teams.teamA.length !== teams.teamB.length
+  const noBowlers = !coreA.some(isBowler) && !coreB.some(isBowler)
 
   const rows = [
     { label: 'Batting', a: avgA.batting, b: avgB.batting },
-    { label: 'Bowling', a: avgA.bowling, b: avgB.bowling },
+    { label: 'Bowling', a: avgA.bowling, b: avgB.bowling, hide: noBowlers },
     { label: 'Fielding', a: avgA.fielding, b: avgB.fielding },
-  ]
+  ].filter(r => !r.hide)
 
   // "Matched" if well under cap, "Close" if within cap, "Gap" if above cap.
   const matchedThreshold = maxSkillGap / 3
@@ -161,6 +164,7 @@ function TeamColumn({
   const coreTeam = subPlayerId ? team.filter(p => p.id !== subPlayerId) : team
   const displayTeam = sortPlayersByScoreDesc(team)
   const avgs = skillAverages(coreTeam)
+  const teamHasBowlers = coreTeam.some(isBowler)
 
   return (
     <div className="flex-1 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
@@ -215,13 +219,17 @@ function TeamColumn({
       <div className="border-t border-gray-100 px-3 py-3 bg-gray-50">
         <div className="grid grid-cols-3 gap-1 text-center">
           {[
-            { label: 'Avg Bat', val: avgs.batting },
-            { label: 'Avg Bowl', val: avgs.bowling },
-            { label: 'Avg Field', val: avgs.fielding },
-          ].map(({ label, val }) => (
+            { label: 'Avg Bat', val: avgs.batting, show: true },
+            { label: 'Avg Bowl', val: avgs.bowling, show: teamHasBowlers },
+            { label: 'Avg Field', val: avgs.fielding, show: true },
+          ].map(({ label, val, show }) => (
             <div key={label}>
               <div className="text-xs text-gray-400">{label}</div>
-              <div className={`text-xs font-bold tabular-nums ${ratingBadge(val)} rounded px-1 inline-block mt-0.5`}>{val.toFixed(1)}</div>
+              {show ? (
+                <div className={`text-xs font-bold tabular-nums ${ratingBadge(val)} rounded px-1 inline-block mt-0.5`}>{val.toFixed(1)}</div>
+              ) : (
+                <div className="text-xs font-bold tabular-nums text-gray-300 mt-0.5">—</div>
+              )}
             </div>
           ))}
         </div>
@@ -408,13 +416,15 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
           bowling_rating: number
           fielding_rating: number
           preset_team: 'A' | 'B' | null
+          can_bowl: boolean
+          needs_runner: boolean
         } | null
       }
 
       const [{ data: spData }, { data: savedTeams }, { data: allActive }] = await Promise.all([
         supabase
           .from('session_players')
-          .select('player_id, players(id, name, batting_rating, bowling_rating, fielding_rating, preset_team)')
+          .select('player_id, players(id, name, batting_rating, bowling_rating, fielding_rating, preset_team, can_bowl, needs_runner)')
           .eq('session_id', id)
           .eq('was_present', true),
         supabase
@@ -423,7 +433,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
           .eq('session_id', id),
         supabase
           .from('players')
-          .select('id, name, batting_rating, bowling_rating, fielding_rating, preset_team')
+          .select('id, name, batting_rating, bowling_rating, fielding_rating, preset_team, can_bowl, needs_runner')
           .eq('is_active', true),
       ])
 
@@ -431,7 +441,7 @@ export default function TeamsPage({ params }: { params: { id: string } }) {
         .filter(row => row.players !== null)
         .map(row => scored(row.players!, weights))
 
-      type ActivePlayer = { id: string; name: string; batting_rating: number; bowling_rating: number; fielding_rating: number; preset_team: 'A' | 'B' | null }
+      type ActivePlayer = { id: string; name: string; batting_rating: number; bowling_rating: number; fielding_rating: number; preset_team: 'A' | 'B' | null; can_bowl: boolean; needs_runner: boolean }
 
       const sessionIds = new Set(sessionPlayers.map(p => p.id))
       setSessionPlayerIds(sessionIds)

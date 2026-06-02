@@ -20,6 +20,10 @@ const STYLE_PENALTY = 0.3
 // above the configured maxSkillGap. Large enough to dominate when feasible,
 // but never produces NaN/Infinity so the optimiser always returns a result.
 const CAP_PENALTY = 100
+// RUNNER_PENALTY is multiplied by the squared difference in the number of
+// players who need a runner on each team. Strong enough to spread runners
+// across both sides, but soft so it never overrides a bad skill split.
+const RUNNER_PENALTY = 0.5
 
 // Brute force becomes expensive past C(20, 10) ≈ 184k; above this we use SA.
 const BRUTE_FORCE_LIMIT = 20
@@ -31,13 +35,27 @@ export function calcScore(
   return p.batting_rating * w.batting + p.bowling_rating * w.bowling + p.fielding_rating * w.fielding
 }
 
-type Skillable = { batting_rating: number; bowling_rating: number; fielding_rating: number }
+type Skillable = {
+  batting_rating: number
+  bowling_rating: number
+  fielding_rating: number
+  // Optional team-balancing flags. Absent → treated as a bowler who needs no runner.
+  can_bowl?: boolean
+  needs_runner?: boolean
+}
+
+// A player counts towards the team's bowling rating unless explicitly flagged as a non-bowler.
+export const isBowler = (p: { can_bowl?: boolean }) => p.can_bowl !== false
 
 export function skillAverages(team: Skillable[]) {
   const n = team.length || 1
+  // Bowling is averaged over bowlers only — non-bowlers are spared from the
+  // team's bowling rating. A team with no bowlers reports 0.
+  const bowlers = team.filter(isBowler)
+  const bn = bowlers.length || 1
   return {
     batting: team.reduce((s, p) => s + p.batting_rating, 0) / n,
-    bowling: team.reduce((s, p) => s + p.bowling_rating, 0) / n,
+    bowling: bowlers.reduce((s, p) => s + p.bowling_rating, 0) / bn,
     fielding: team.reduce((s, p) => s + p.fielding_rating, 0) / n,
   }
 }
@@ -74,7 +92,13 @@ export function balanceLoss(
   const oField = overage(dField)
   const capPenalty = CAP_PENALTY * (oBat * oBat + oBowl * oBowl + oField * oField)
 
-  return overallGap * overallGap + STYLE_PENALTY * perSkillSpread + capPenalty
+  // Spread players who need a runner evenly across both teams.
+  const runnersA = a.filter(p => p.needs_runner).length
+  const runnersB = b.filter(p => p.needs_runner).length
+  const dRun = runnersA - runnersB
+  const runnerPenalty = RUNNER_PENALTY * dRun * dRun
+
+  return overallGap * overallGap + STYLE_PENALTY * perSkillSpread + capPenalty + runnerPenalty
 }
 
 /**

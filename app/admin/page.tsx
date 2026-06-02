@@ -18,6 +18,8 @@ type Player = {
   fielding_rating: number
   is_active: boolean
   preset_team: 'A' | 'B' | null
+  can_bowl: boolean
+  needs_runner: boolean
 }
 
 type PlayerForm = {
@@ -26,6 +28,8 @@ type PlayerForm = {
   bowling_rating: number
   fielding_rating: number
   preset_team: 'A' | 'B' | null
+  can_bowl: boolean
+  needs_runner: boolean
 }
 
 const DEFAULT_FORM: PlayerForm = {
@@ -34,6 +38,8 @@ const DEFAULT_FORM: PlayerForm = {
   bowling_rating: 5,
   fielding_rating: 5,
   preset_team: null,
+  can_bowl: true,
+  needs_runner: false,
 }
 
 // ─── RatingSlider ─────────────────────────────────────────────────────────────
@@ -42,18 +48,26 @@ function RatingSlider({
   label,
   value,
   onChange,
+  disabled = false,
+  disabledNote,
 }: {
   label: string
   value: number
   onChange: (v: number) => void
+  disabled?: boolean
+  disabledNote?: string
 }) {
   return (
-    <div>
+    <div className={disabled ? 'opacity-50' : ''}>
       <div className="flex justify-between items-center mb-1">
         <label className="text-sm font-medium text-gray-700">{label}</label>
-        <span className={`text-sm font-bold tabular-nums ${ratingTextColor(value)}`}>
-          {value.toFixed(1)}
-        </span>
+        {disabled && disabledNote ? (
+          <span className="text-xs font-medium text-gray-400">{disabledNote}</span>
+        ) : (
+          <span className={`text-sm font-bold tabular-nums ${ratingTextColor(value)}`}>
+            {value.toFixed(1)}
+          </span>
+        )}
       </div>
       <input
         type="range"
@@ -61,14 +75,44 @@ function RatingSlider({
         max={10}
         step={0.5}
         value={value}
+        disabled={disabled}
         onChange={e => onChange(parseFloat(e.target.value))}
-        className="w-full h-2 accent-green-700 cursor-pointer"
+        className="w-full h-2 accent-green-700 cursor-pointer disabled:cursor-not-allowed"
       />
       <div className="flex justify-between text-xs text-gray-400 mt-0.5">
         <span>1</span>
         <span>10</span>
       </div>
     </div>
+  )
+}
+
+// ─── Toggle ───────────────────────────────────────────────────────────────────
+
+function Toggle({
+  label,
+  description,
+  checked,
+  onChange,
+}: {
+  label: string
+  description: string
+  checked: boolean
+  onChange: (v: boolean) => void
+}) {
+  return (
+    <label className="flex items-center justify-between gap-3 cursor-pointer select-none">
+      <span>
+        <span className="block text-sm font-medium text-gray-700">{label}</span>
+        <span className="block text-xs text-gray-400">{description}</span>
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={e => onChange(e.target.checked)}
+        className="w-5 h-5 accent-green-700 cursor-pointer shrink-0"
+      />
+    </label>
   )
 }
 
@@ -104,6 +148,17 @@ function PlayerCard({
           {overall.toFixed(1)}
         </span>
       </div>
+
+      {(player.needs_runner || !player.can_bowl) && (
+        <div className="flex flex-wrap gap-1 -mt-1">
+          {player.needs_runner && (
+            <span className="text-xs font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">🏃 Runner</span>
+          )}
+          {!player.can_bowl && (
+            <span className="text-xs font-semibold bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">No bowl</span>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-1.5 text-center">
         {[
@@ -163,6 +218,8 @@ function PlayerModal({
             bowling_rating: editing.bowling_rating,
             fielding_rating: editing.fielding_rating,
             preset_team: editing.preset_team,
+            can_bowl: editing.can_bowl,
+            needs_runner: editing.needs_runner,
           }
         : DEFAULT_FORM
     )
@@ -214,8 +271,29 @@ function PlayerModal({
           </div>
 
           <RatingSlider label="Batting" value={form.batting_rating} onChange={v => set('batting_rating', v)} />
-          <RatingSlider label="Bowling" value={form.bowling_rating} onChange={v => set('bowling_rating', v)} />
+          <RatingSlider
+            label="Bowling"
+            value={form.bowling_rating}
+            onChange={v => set('bowling_rating', v)}
+            disabled={!form.can_bowl}
+            disabledNote="Doesn’t bowl"
+          />
           <RatingSlider label="Fielding" value={form.fielding_rating} onChange={v => set('fielding_rating', v)} />
+
+          <div className="space-y-3 border-t border-gray-100 pt-4">
+            <Toggle
+              label="Doesn’t bowl"
+              description="Excluded from the team’s bowling rating"
+              checked={!form.can_bowl}
+              onChange={v => set('can_bowl', !v)}
+            />
+            <Toggle
+              label="Needs a runner"
+              description="Spread evenly across both teams"
+              checked={form.needs_runner}
+              onChange={v => set('needs_runner', v)}
+            />
+          </div>
 
           <div className={`text-center text-sm font-semibold py-2 rounded-lg ${ratingBadge(preview)}`}>
             Overall score: {preview.toFixed(1)}
