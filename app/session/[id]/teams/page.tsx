@@ -76,15 +76,14 @@ function placeFloaters(
 
 /**
  * Balance present players into two teams with these priorities:
- *   1. Equal bowler counts — non-bowlers are set aside, the bowlers are balanced
- *      into an even core, then non-bowlers are re-inserted as batting/fielding
- *      contributors. Both teams end up with the same number of bowlers (±1 only
- *      when the bowler count is genuinely odd).
- *   2. Equal team sizes (±1).
+ *   1. Equal bowler counts — only the bowlers are balanced (seeded bowlers fixed
+ *      to their side, free bowlers distributed). Because every player fed to the
+ *      optimiser is a bowler, equal headcount means equal bowler count. Both
+ *      teams end up with the same number of bowlers (±1 only when the total
+ *      bowler count is genuinely odd, in which case the weakest bowler subs out).
+ *   2. Equal team sizes (±1) — seeded non-bowlers are re-attached and free
+ *      non-bowlers are placed as floaters to even out headcount.
  *   3. Skill balance + runner spread (handled inside optimalBalance/balanceLoss).
- *
- * When the bowler pool is odd, the weakest bowler is pulled out as the sub so
- * the balanced core stays even — preserving the "weakest sits out" convention.
  */
 function balanceWithSub(
   players: ScoredPlayer[],
@@ -96,20 +95,29 @@ function balanceWithSub(
   const seededB = keepPreseeded ? players.filter(p => p.preset_team === 'B') : []
   const free = keepPreseeded ? players.filter(p => !p.preset_team) : players
 
-  const bowlers = free.filter(isBowler)
-  const nonBowlers = free.filter(p => !isBowler(p))
+  // Bowler count is balanced via optimalBalance; non-bowlers are placed after
+  // as floaters so they never distort the bowling split.
+  const seededBowlersA = seededA.filter(isBowler)
+  const seededBowlersB = seededB.filter(isBowler)
+  const seededNonBowlersA = seededA.filter(p => !isBowler(p))
+  const seededNonBowlersB = seededB.filter(p => !isBowler(p))
+  const freeBowlers = free.filter(isBowler)
+  const freeNonBowlers = free.filter(p => !isBowler(p))
 
-  // Floaters are placed after the core is balanced: every non-bowler, plus the
-  // weakest bowler as the sub when the bowler pool can't split evenly.
-  const floaters: ScoredPlayer[] = [...nonBowlers]
-  let core = bowlers
-  if (bowlers.length % 2 !== 0) {
-    const sub = [...bowlers].sort((a, b) => a.score - b.score)[0]
-    core = bowlers.filter(p => p.id !== sub.id)
+  // Floaters: every free non-bowler, plus the weakest free bowler as the sub
+  // when the total bowler count is odd (so the balanced core stays even).
+  const floaters: ScoredPlayer[] = [...freeNonBowlers]
+  let coreFreeBowlers = freeBowlers
+  const totalBowlers = seededBowlersA.length + seededBowlersB.length + freeBowlers.length
+  if (totalBowlers % 2 !== 0 && freeBowlers.length > 0) {
+    const sub = [...freeBowlers].sort((a, b) => a.score - b.score)[0]
+    coreFreeBowlers = freeBowlers.filter(p => p.id !== sub.id)
     floaters.push(sub)
   }
 
-  const { teamA, teamB } = optimalBalance(core, weights, seededA, seededB, maxSkillGap)
+  const balanced = optimalBalance(coreFreeBowlers, weights, seededBowlersA, seededBowlersB, maxSkillGap)
+  const teamA = [...balanced.teamA, ...seededNonBowlersA]
+  const teamB = [...balanced.teamB, ...seededNonBowlersB]
 
   if (floaters.length === 0) {
     return { teamA, teamB }
