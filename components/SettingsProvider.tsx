@@ -2,11 +2,12 @@
 
 import { createContext, useContext, useEffect, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
-import { DEFAULT_MAX_SKILL_GAP, DEFAULT_WEIGHTS, type Weights } from '@/lib/utils'
+import { DEFAULT_MAX_SKILL_GAP, DEFAULT_RECENT_WEIGHT, DEFAULT_WEIGHTS, type Weights } from '@/lib/utils'
 
 type SettingsCtx = {
   weights: Weights
   maxSkillGap: number
+  recentWeight: number
   isLoading: boolean
   reload: () => void
 }
@@ -14,6 +15,7 @@ type SettingsCtx = {
 const SettingsContext = createContext<SettingsCtx>({
   weights: DEFAULT_WEIGHTS,
   maxSkillGap: DEFAULT_MAX_SKILL_GAP,
+  recentWeight: DEFAULT_RECENT_WEIGHT,
   isLoading: true,
   reload: () => {},
 })
@@ -25,6 +27,7 @@ export function useSettings() {
 export default function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [weights, setWeights] = useState<Weights>(DEFAULT_WEIGHTS)
   const [maxSkillGap, setMaxSkillGap] = useState<number>(DEFAULT_MAX_SKILL_GAP)
+  const [recentWeight, setRecentWeight] = useState<number>(DEFAULT_RECENT_WEIGHT)
   const [isLoading, setIsLoading] = useState(true)
   const [tick, setTick] = useState(0)
 
@@ -41,7 +44,7 @@ export default function SettingsProvider({ children }: { children: React.ReactNo
 
     supabase
       .from('settings')
-      .select('batting_weight, bowling_weight, fielding_weight, max_skill_gap')
+      .select('batting_weight, bowling_weight, fielding_weight, max_skill_gap, recent_weight')
       .eq('id', 1)
       .single()
       .then(({ data }) => {
@@ -57,6 +60,10 @@ export default function SettingsProvider({ children }: { children: React.ReactNo
           if (gap !== null && gap !== undefined && !Number.isNaN(Number(gap))) {
             setMaxSkillGap(Number(gap))
           }
+          const rw = data.recent_weight
+          if (rw !== null && rw !== undefined && !Number.isNaN(Number(rw))) {
+            setRecentWeight(Number(rw))
+          }
         }
         setIsLoading(false)
       })
@@ -66,7 +73,7 @@ export default function SettingsProvider({ children }: { children: React.ReactNo
 
   return (
     <SettingsContext.Provider
-      value={{ weights, maxSkillGap, isLoading, reload: () => setTick(t => t + 1) }}
+      value={{ weights, maxSkillGap, recentWeight, isLoading, reload: () => setTick(t => t + 1) }}
     >
       {children}
     </SettingsContext.Provider>

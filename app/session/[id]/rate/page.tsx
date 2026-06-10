@@ -75,7 +75,7 @@ function RatingSlider({
 export default function RatePage({ params }: { params: { id: string } }) {
   const { id } = params
   const { user, supabase, isLoading: authLoading } = useAuth()
-  const { weights } = useSettings()
+  const { weights, recentWeight } = useSettings()
   const router = useRouter()
   const [players, setPlayers] = useState<PlayerRating[]>([])
   const [fetching, setFetching] = useState(true)
@@ -149,13 +149,15 @@ export default function RatePage({ params }: { params: { id: string } }) {
           .eq('session_id', id)
           .eq('player_id', p.id)
 
-        // 2. Update aggregate player ratings: 70% existing + 30% today's score
+        // 2. Update aggregate player ratings: blend existing profile with
+        //    today's score using the admin-configured recent-performance weight.
+        const prior = 1 - recentWeight
         await supabase
           .from('players')
           .update({
-            batting_rating:  round1dp(0.7 * p.batting_rating  + 0.3 * p.batting_score),
-            bowling_rating:  round1dp(0.7 * p.bowling_rating  + 0.3 * p.bowling_score),
-            fielding_rating: round1dp(0.7 * p.fielding_rating + 0.3 * p.fielding_score),
+            batting_rating:  round1dp(prior * p.batting_rating  + recentWeight * p.batting_score),
+            bowling_rating:  round1dp(prior * p.bowling_rating  + recentWeight * p.bowling_score),
+            fielding_rating: round1dp(prior * p.fielding_rating + recentWeight * p.fielding_score),
           })
           .eq('id', p.id)
       })
@@ -182,7 +184,7 @@ export default function RatePage({ params }: { params: { id: string } }) {
         <h1 className="text-2xl font-bold text-gray-900">Rate Players</h1>
         <p className="text-sm text-gray-500 mt-0.5">
           Rate today&apos;s performance. Each player&apos;s profile will update using a weighted average
-          (70% existing · 30% today).
+          ({Math.round((1 - recentWeight) * 100)}% existing · {Math.round(recentWeight * 100)}% today).
         </p>
       </div>
 

@@ -5,11 +5,13 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/AuthProvider'
 import { useToast } from '@/components/ToastProvider'
 import { useSettings } from '@/components/SettingsProvider'
-import { DEFAULT_MAX_SKILL_GAP } from '@/lib/utils'
+import { DEFAULT_MAX_SKILL_GAP, DEFAULT_RECENT_WEIGHT } from '@/lib/utils'
 import Spinner from '@/components/Spinner'
 
 const MIN_SKILL_GAP = 0.5
 const MAX_SKILL_GAP_LIMIT = 3.0
+const MIN_RECENT_PCT = 5
+const MAX_RECENT_PCT = 50
 
 function WeightInput({
   label,
@@ -65,6 +67,7 @@ export default function SettingsPage() {
   const [bowling, setBowling] = useState(40)
   const [fielding, setFielding] = useState(20)
   const [maxSkillGap, setMaxSkillGap] = useState<number>(DEFAULT_MAX_SKILL_GAP)
+  const [recentPct, setRecentPct] = useState<number>(Math.round(DEFAULT_RECENT_WEIGHT * 100))
   const [fetching, setFetching] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -76,7 +79,7 @@ export default function SettingsPage() {
     if (!user) return
     supabase
       .from('settings')
-      .select('batting_weight, bowling_weight, fielding_weight, max_skill_gap')
+      .select('batting_weight, bowling_weight, fielding_weight, max_skill_gap, recent_weight')
       .eq('id', 1)
       .single()
       .then(({ data }) => {
@@ -88,6 +91,10 @@ export default function SettingsPage() {
           if (gap !== null && gap !== undefined && !Number.isNaN(Number(gap))) {
             setMaxSkillGap(Number(gap))
           }
+          const rw = data.recent_weight
+          if (rw !== null && rw !== undefined && !Number.isNaN(Number(rw))) {
+            setRecentPct(Math.round(Number(rw) * 100))
+          }
         }
         setFetching(false)
       })
@@ -98,6 +105,7 @@ export default function SettingsPage() {
   const totalColor = isValid ? 'text-green-700' : 'text-red-600'
 
   const clampedGap = Math.min(MAX_SKILL_GAP_LIMIT, Math.max(MIN_SKILL_GAP, maxSkillGap))
+  const clampedRecentPct = Math.min(MAX_RECENT_PCT, Math.max(MIN_RECENT_PCT, recentPct))
 
   const handleSave = async () => {
     if (!isValid || saving) return
@@ -109,6 +117,7 @@ export default function SettingsPage() {
         bowling_weight: bowling / 100,
         fielding_weight: fielding / 100,
         max_skill_gap: clampedGap,
+        recent_weight: clampedRecentPct / 100,
       })
       .eq('id', 1)
 
@@ -219,6 +228,54 @@ export default function SettingsPage() {
                 onChange={e => setMaxSkillGap(parseFloat(e.target.value))}
                 className="w-full h-2 accent-green-700 cursor-pointer mt-2"
               />
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-gray-100">
+            <h2 className="font-bold text-gray-900 mb-1">Recent Performance Weight</h2>
+            <p className="text-xs text-gray-400 mb-4">
+              When you rate a session, each player&apos;s profile is updated as a
+              weighted average of their existing rating and today&apos;s score. This
+              sets how much today&apos;s performance counts.
+            </p>
+            <div className="bg-gray-50 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-1">
+                <div>
+                  <div className="text-sm font-semibold text-gray-900">Weight of today&apos;s score</div>
+                  <div className="text-xs text-gray-400">
+                    Default {Math.round(DEFAULT_RECENT_WEIGHT * 100)}% · range {MIN_RECENT_PCT}–{MAX_RECENT_PCT}%
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min={MIN_RECENT_PCT}
+                    max={MAX_RECENT_PCT}
+                    step={5}
+                    value={recentPct}
+                    onChange={e => {
+                      const v = parseInt(e.target.value)
+                      setRecentPct(Number.isNaN(v) ? Math.round(DEFAULT_RECENT_WEIGHT * 100) : v)
+                    }}
+                    className="w-16 text-right px-2 py-1.5 border border-gray-300 rounded-lg text-sm font-bold focus:outline-none focus:ring-2 focus:ring-green-700 focus:border-transparent tabular-nums"
+                  />
+                  <span className="text-sm text-gray-500 font-medium">%</span>
+                </div>
+              </div>
+              <input
+                type="range"
+                min={MIN_RECENT_PCT}
+                max={MAX_RECENT_PCT}
+                step={5}
+                value={clampedRecentPct}
+                onChange={e => setRecentPct(parseInt(e.target.value))}
+                className="w-full h-2 accent-green-700 cursor-pointer mt-2"
+              />
+              <p className="text-xs text-gray-500 mt-3 text-center">
+                New rating = <span className="font-semibold text-gray-700">{100 - clampedRecentPct}%</span> profile
+                {' · '}
+                <span className="font-semibold text-gray-700">{clampedRecentPct}%</span> today
+              </p>
             </div>
           </div>
 

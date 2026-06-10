@@ -12,6 +12,11 @@ export const DEFAULT_WEIGHTS: Weights = {
 
 export const DEFAULT_MAX_SKILL_GAP = 1.5
 
+// Fraction of a player's new profile rating that comes from today's session
+// score. The remaining (1 - DEFAULT_RECENT_WEIGHT) is carried from the existing
+// profile. Admin-configurable; this is the fallback when unset.
+export const DEFAULT_RECENT_WEIGHT = 0.3
+
 // Hybrid loss tunables.
 // STYLE_PENALTY weights per-skill spread relative to the overall score gap.
 // Higher → more punishment for "batting team vs bowling team" type splits.
