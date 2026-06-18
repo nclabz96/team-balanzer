@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { useAuth } from '@/components/AuthProvider'
 import { useToast } from '@/components/ToastProvider'
 import { useSettings } from '@/components/SettingsProvider'
-import { calcScore, ratingBadge, skillAverages, balanceLoss, optimalBalance, isBowler, type Weights } from '@/lib/utils'
+import { calcScore, ratingBadge, skillAverages, isBowler, balanceLoss, balanceWithSub, type Weights } from '@/lib/utils'
 import Spinner from '@/components/Spinner'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -37,92 +37,6 @@ function sortPlayersByName(players: ScoredPlayer[]) {
 
 function sortPlayersByScoreDesc(players: ScoredPlayer[]) {
   return [...players].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
-}
-
-// ─── balanceWithSub ───────────────────────────────────────────────────────────
-
-/**
- * Place "floater" players (non-bowlers + an optional odd-man sub) onto two
- * already-balanced teams. Each floater goes to the smaller side, or — when the
- * sides are level — to whichever side yields the lower balance loss. Floaters
- * are placed strongest-first so the most impactful picks settle the balance.
- */
-function placeFloaters(
-  teamA: ScoredPlayer[],
-  teamB: ScoredPlayer[],
-  floaters: ScoredPlayer[],
-  weights: Weights,
-  maxSkillGap: number
-): Teams {
-  let a = [...teamA]
-  let b = [...teamB]
-  const ordered = [...floaters].sort((x, y) => y.score - x.score)
-
-  for (const f of ordered) {
-    if (a.length < b.length) {
-      a = [...a, f]
-    } else if (b.length < a.length) {
-      b = [...b, f]
-    } else {
-      const lossOnA = balanceLoss([...a, f], b, weights, maxSkillGap)
-      const lossOnB = balanceLoss(a, [...b, f], weights, maxSkillGap)
-      if (lossOnA <= lossOnB) a = [...a, f]
-      else b = [...b, f]
-    }
-  }
-
-  return { teamA: a, teamB: b }
-}
-
-/**
- * Balance present players into two teams with these priorities:
- *   1. Equal bowler counts — only the bowlers are balanced (seeded bowlers fixed
- *      to their side, free bowlers distributed). Because every player fed to the
- *      optimiser is a bowler, equal headcount means equal bowler count. Both
- *      teams end up with the same number of bowlers (±1 only when the total
- *      bowler count is genuinely odd, in which case the weakest bowler subs out).
- *   2. Equal team sizes (±1) — seeded non-bowlers are re-attached and free
- *      non-bowlers are placed as floaters to even out headcount.
- *   3. Skill balance + runner spread (handled inside optimalBalance/balanceLoss).
- */
-function balanceWithSub(
-  players: ScoredPlayer[],
-  weights: Weights,
-  keepPreseeded: boolean,
-  maxSkillGap: number
-): Teams {
-  const seededA = keepPreseeded ? players.filter(p => p.preset_team === 'A') : []
-  const seededB = keepPreseeded ? players.filter(p => p.preset_team === 'B') : []
-  const free = keepPreseeded ? players.filter(p => !p.preset_team) : players
-
-  // Bowler count is balanced via optimalBalance; non-bowlers are placed after
-  // as floaters so they never distort the bowling split.
-  const seededBowlersA = seededA.filter(isBowler)
-  const seededBowlersB = seededB.filter(isBowler)
-  const seededNonBowlersA = seededA.filter(p => !isBowler(p))
-  const seededNonBowlersB = seededB.filter(p => !isBowler(p))
-  const freeBowlers = free.filter(isBowler)
-  const freeNonBowlers = free.filter(p => !isBowler(p))
-
-  // Floaters: every free non-bowler, plus the weakest free bowler as the sub
-  // when the total bowler count is odd (so the balanced core stays even).
-  const floaters: ScoredPlayer[] = [...freeNonBowlers]
-  let coreFreeBowlers = freeBowlers
-  const totalBowlers = seededBowlersA.length + seededBowlersB.length + freeBowlers.length
-  if (totalBowlers % 2 !== 0 && freeBowlers.length > 0) {
-    const sub = [...freeBowlers].sort((a, b) => a.score - b.score)[0]
-    coreFreeBowlers = freeBowlers.filter(p => p.id !== sub.id)
-    floaters.push(sub)
-  }
-
-  const balanced = optimalBalance(coreFreeBowlers, weights, seededBowlersA, seededBowlersB, maxSkillGap)
-  const teamA = [...balanced.teamA, ...seededNonBowlersA]
-  const teamB = [...balanced.teamB, ...seededNonBowlersB]
-
-  if (floaters.length === 0) {
-    return { teamA, teamB }
-  }
-  return placeFloaters(teamA, teamB, floaters, weights, maxSkillGap)
 }
 
 // ─── SkillBalance ─────────────────────────────────────────────────────────────
